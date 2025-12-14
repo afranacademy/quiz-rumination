@@ -1,6 +1,6 @@
-import type { LikertValue, LevelKey } from "../types";
-import { scoreAfranR14 } from "../scoring/scoreAfranR14";
-import { getLevel } from "../scoring/levelsAfranR14";
+import type { LikertValue, LevelKey } from "../quiz/types";
+import { scoreAfranR14 } from "../quiz/scoring/scoreAfranR14";
+import { getLevel } from "../quiz/scoring/levelsAfranR14";
 
 // Lazy load Supabase to avoid build errors if not configured
 let supabaseClient: any = null;
