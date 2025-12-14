@@ -7,5 +7,6 @@
 
   Run `npm i` to install the dependencies.
 
+segredg
   Run `npm run dev` to start the development server.
   
