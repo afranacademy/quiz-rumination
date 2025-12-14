@@ -17,9 +17,10 @@ interface LandingPageProps {
     mobile?: string;
   };
   onFieldChange: (field: "firstName" | "lastName" | "mobile", value: string) => void;
+  isLoading?: boolean;
 }
 
-export function LandingPage({ onStart, formData, errors, onFieldChange }: LandingPageProps) {
+export function LandingPage({ onStart, formData, errors, onFieldChange, isLoading = false }: LandingPageProps) {
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-6" style={{ paddingTop: 'max(1.5rem, env(safe-area-inset-top))', paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}>
       <div className="w-full max-w-md mx-auto">
@@ -129,16 +130,17 @@ export function LandingPage({ onStart, formData, errors, onFieldChange }: Landin
             <Button
               type="submit"
               size="lg"
-              className="w-full px-6 py-5 text-base sm:text-lg rounded-2xl bg-primary/90 hover:bg-primary backdrop-blur-sm shadow-lg shadow-primary/20 border border-primary/30"
+              disabled={isLoading}
+              className="w-full px-6 py-5 text-base sm:text-lg rounded-2xl bg-primary/90 hover:bg-primary backdrop-blur-sm shadow-lg shadow-primary/20 border border-primary/30 disabled:opacity-50"
             >
-              شروع آزمون
+              {isLoading ? "در حال آماده‌سازی..." : "شروع آزمون"}
             </Button>
           </form>
 
           {/* Trust Note */}
           <div className="pt-4 border-t border-white/10">
             <p className="text-xs text-center text-muted-foreground/70 leading-6">
-              <span className="font-medium text-foreground/80">توجه:</span> این ابزار آموزشی است و جایگزین تشخیص پزشکی نیست.
+              <span className="font-medium text-foreground/80">توجه:</span> این ابزار آموزشی است و جایگزین تشخیص بالینی نیست.
             </p>
           </div>
         </div>

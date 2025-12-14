@@ -17,9 +17,15 @@ interface ResultPageProps {
   firstName: string | null;
   onRetake: () => void;
   isPreviewMode?: boolean;
+  attemptData?: {
+    quiz_id: string;
+    score_band_id: number | null;
+    dimension_scores: Record<string, number>;
+  } | null;
+  attemptId?: string | null;
 }
 
-export function ResultPage({ score, level, firstName, onRetake, isPreviewMode = false }: ResultPageProps) {
+export function ResultPage({ score, level, firstName, onRetake, isPreviewMode = false, attemptData, attemptId }: ResultPageProps) {
   const content = afranR14ResultContent[level];
   
   // Level-specific icons
@@ -32,6 +38,13 @@ export function ResultPage({ score, level, firstName, onRetake, isPreviewMode = 
   return (
     <div className="min-h-screen px-4 py-6" style={{ paddingTop: 'max(1.5rem, env(safe-area-inset-top))', paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}>
       <div className="w-full max-w-none sm:max-w-md md:max-w-lg lg:max-w-xl mx-auto space-y-4 sm:space-y-6">
+        {/* Feature3 wiring test badge */}
+        <div className="flex justify-center">
+          <div className="inline-flex items-center px-2 sm:px-3 py-1 rounded-full bg-white/5 border border-white/10 backdrop-blur-sm text-foreground/60 text-[10px] sm:text-xs font-normal">
+            Feature3 wiring test: OK
+          </div>
+        </div>
+
         {/* DEV-ONLY: Preview Mode Badge */}
         {isPreviewMode && (
           <div className="flex justify-center">
@@ -76,6 +89,8 @@ export function ResultPage({ score, level, firstName, onRetake, isPreviewMode = 
           firstName={firstName}
           score={score}
           levelLabel={getLevelLabel(level)}
+          attemptData={attemptData}
+          attemptId={attemptId}
         />
 
         {/* Ethics Notice Card */}

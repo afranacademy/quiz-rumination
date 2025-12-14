@@ -10,9 +10,12 @@ import type { LikertValue } from "@/features/quiz/types";
 
 interface QuizPageProps {
   onComplete: (answers: Record<number, LikertValue>) => void;
+  onAnswerChange?: (answers: Record<number, LikertValue>) => void;
+  onExit?: () => void;
+  isSubmitting?: boolean;
 }
 
-export function QuizPage({ onComplete }: QuizPageProps) {
+export function QuizPage({ onComplete, onAnswerChange, onExit, isSubmitting = false }: QuizPageProps) {
   const navigate = useNavigate();
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [answers, setAnswers] = useState<Record<number, LikertValue>>({});
@@ -23,12 +26,16 @@ export function QuizPage({ onComplete }: QuizPageProps) {
   const hasAnswer = answers[question.id] !== undefined;
 
   const handleAnswer = (value: LikertValue) => {
-    setAnswers((prev) => ({ ...prev, [question.id]: value }));
+    const newAnswers = { ...answers, [question.id]: value };
+    setAnswers(newAnswers);
+    onAnswerChange?.(newAnswers);
   };
 
   const handleNext = () => {
     if (isLastQuestion) {
+      if (!isSubmitting) {
       onComplete(answers);
+      }
     } else {
       setCurrentQuestion((prev) => prev + 1);
     }
@@ -36,6 +43,8 @@ export function QuizPage({ onComplete }: QuizPageProps) {
 
   const handleBack = () => {
     if (isFirstQuestion) {
+      // User is exiting the quiz
+      onExit?.();
       navigate("/");
     } else {
       setCurrentQuestion((prev) => prev - 1);
@@ -62,8 +71,8 @@ export function QuizPage({ onComplete }: QuizPageProps) {
         {/* Glass Question Card */}
         <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-3xl shadow-2xl shadow-black/20 p-6 sm:p-8 space-y-8 flex-1 flex flex-col">
           {/* Question Text */}
-          <div className="text-center sm:text-right flex-1 flex items-center">
-            <h3 className="text-base sm:text-lg md:text-xl text-foreground leading-6 sm:leading-7 font-normal text-justify">
+          <div className="text-center flex-1 flex items-center">
+            <h3 className="text-sm sm:text-base md:text-lg text-foreground leading-6 sm:leading-7 font-normal max-w-full px-2">
               {question.text}
             </h3>
           </div>
@@ -102,10 +111,10 @@ export function QuizPage({ onComplete }: QuizPageProps) {
           <Button
             size="lg"
             onClick={handleNext}
-            disabled={!hasAnswer}
+            disabled={!hasAnswer || isSubmitting}
             className="flex-1 rounded-2xl min-h-[44px] bg-primary/90 hover:bg-primary backdrop-blur-sm shadow-lg shadow-primary/20 border border-primary/30 disabled:opacity-40"
           >
-            {isLastQuestion ? "مشاهده نتیجه" : "بعدی"}
+            {isLastQuestion ? (isSubmitting ? "در حال ارسال..." : "مشاهده نتیجه") : "بعدی"}
             {!isLastQuestion && <ChevronLeft className="w-5 h-5 mr-2" />}
           </Button>
         </div>
@@ -127,10 +136,10 @@ export function QuizPage({ onComplete }: QuizPageProps) {
           <Button
             size="lg"
             onClick={handleNext}
-            disabled={!hasAnswer}
+            disabled={!hasAnswer || isSubmitting}
             className="rounded-2xl min-h-[44px] bg-primary/90 hover:bg-primary backdrop-blur-sm shadow-lg shadow-primary/20 border border-primary/30 disabled:opacity-40"
           >
-            {isLastQuestion ? "مشاهده نتیجه" : "بعدی"}
+            {isLastQuestion ? (isSubmitting ? "در حال ارسال..." : "مشاهده نتیجه") : "بعدی"}
             {!isLastQuestion && <ChevronLeft className="w-5 h-5 mr-2" />}
           </Button>
         </div>

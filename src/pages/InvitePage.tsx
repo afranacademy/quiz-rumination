@@ -10,7 +10,6 @@ export default function InvitePage() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<"loading" | "pending" | "expired" | "ready">("loading");
   const [error, setError] = useState<string | null>(null);
-  const [showQuiz, setShowQuiz] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -39,13 +38,6 @@ export default function InvitePage() {
         setStatus("expired");
       });
   }, [token]);
-
-  if (showQuiz && token) {
-    // Navigate to quiz with invite token
-    return <QuizPageComponent onComplete={async (quizAnswers) => {
-      // This will be handled by QuizPage with invite token from URL
-    }} />;
-  }
 
   if (status === "loading") {
     return (
