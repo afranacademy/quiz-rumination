@@ -7,6 +7,8 @@ export type CompareSession = {
   status: "pending" | "completed";
   createdAt: string;
   expiresAt: string | null;
+  inviterFirstName: string | null;
+  inviterLastName: string | null;
 };
 
 /**
@@ -81,6 +83,8 @@ export async function getCompareSession(token: string): Promise<CompareSession |
       attempt_a_id: row.attempt_a_id?.substring(0, 8) + "...",
       attempt_b_id: row.attempt_b_id?.substring(0, 8) + "..." || "null",
       expires_at: row.expires_at,
+      inviter_first_name: row.inviter_first_name,
+      inviter_last_name: row.inviter_last_name,
       query_path: "RPC",
       data: row,
       error: null,
@@ -95,5 +99,7 @@ export async function getCompareSession(token: string): Promise<CompareSession |
     status: row.status as "pending" | "completed",
     createdAt: row.created_at,
     expiresAt: row.expires_at,
+    inviterFirstName: row.inviter_first_name || null,
+    inviterLastName: row.inviter_last_name || null,
   };
 }

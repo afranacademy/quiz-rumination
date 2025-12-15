@@ -9,7 +9,10 @@ import { levelOfDimension } from "../quiz/dimensions";
  * Rules:
  * 1) For each dimension:
  *    - delta = abs(aScore - bScore) rounded to 1 decimal
- *    - relation: if delta < 0.8 => "similar", else => "different"
+ *    - relation: 
+ *      - if delta < 0.8 => "similar"
+ *      - if 0.8 <= delta < 1.6 => "different"
+ *      - if delta >= 1.6 => "very_different"
  * 2) summarySimilarity:
  *    - count how many dimensions are "similar" out of 4
  *    - 0-1 similar => "low"
@@ -29,10 +32,25 @@ export function compareAttempts(a: Attempt, b: Attempt): Comparison {
     const aScore = aDimensions[key];
     const bScore = bDimensions[key];
     const delta = Math.round(Math.abs(aScore - bScore) * 10) / 10;
-    const relation = delta < 0.8 ? "similar" : "different";
-
-    if (relation === "similar") {
+    
+    let relation: "similar" | "different" | "very_different";
+    if (delta < 0.8) {
+      relation = "similar";
       similarCount++;
+    } else if (delta < 1.6) {
+      relation = "different";
+    } else {
+      relation = "very_different";
+    }
+
+    // Determine direction
+    let direction: "a_higher" | "b_higher" | "equal";
+    if (Math.abs(aScore - bScore) < 0.1) {
+      direction = "equal";
+    } else if (aScore > bScore) {
+      direction = "a_higher";
+    } else {
+      direction = "b_higher";
     }
 
     dimensions[key] = {
@@ -40,6 +58,7 @@ export function compareAttempts(a: Attempt, b: Attempt): Comparison {
       bScore,
       delta,
       relation,
+      direction,
       aLevel: levelOfDimension(aScore),
       bLevel: levelOfDimension(bScore),
     };

@@ -10,6 +10,7 @@ import CompareLandingPage from "@/pages/CompareLandingPage";
 import CompareResultPage from "@/pages/CompareResultPage";
 import CompareSessionPage from "@/pages/CompareSessionPage";
 import { useAnonAuth } from "@/hooks/useAnonAuth";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 // DEV-only: Import the latest compare shortcut page
 // The component itself handles DEV-only checks, so this import is safe
@@ -42,7 +43,14 @@ export default function App() {
           <Route path="/result" element={<ResultPage />} />
           <Route path="/invite/:token" element={<InvitePage />} />
           <Route path="/compare/invite/:token" element={<CompareInvitePage />} />
-          <Route path="/compare/result/:token" element={<CompareResultPage />} />
+          <Route
+            path="/compare/result/:token"
+            element={
+              <ErrorBoundary>
+                <CompareResultPage />
+              </ErrorBoundary>
+            }
+          />
           {/* DEV-only: Latest compare shortcut - route only exists in DEV mode */}
           {import.meta.env.DEV && (
             <Route path="/compare/dev/latest" element={<CompareDevLatestPage />} />

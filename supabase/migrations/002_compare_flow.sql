@@ -43,11 +43,13 @@ BEGIN
   END IF;
 END $$;
 
--- Make required columns NOT NULL (only for new rows)
+-- Make user_first_name and user_phone NOT NULL with defaults (user_last_name stays nullable)
 ALTER TABLE attempts 
   ALTER COLUMN user_first_name SET DEFAULT '',
-  ALTER COLUMN user_last_name SET DEFAULT '',
   ALTER COLUMN user_phone SET DEFAULT '';
+  
+-- Ensure user_last_name is nullable (no NOT NULL constraint)
+-- This allows graceful fallback when last name is not provided
 
 -- ============================================
 -- 2. Create compare_sessions table
@@ -129,7 +131,9 @@ RETURNS TABLE (
   attempt_b_id uuid,
   status text,
   created_at timestamptz,
-  expires_at timestamptz
+  expires_at timestamptz,
+  inviter_first_name text,
+  inviter_last_name text
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -143,8 +147,11 @@ BEGIN
     cs.attempt_b_id,
     cs.status,
     cs.created_at,
-    cs.expires_at
+    cs.expires_at,
+    a.user_first_name as inviter_first_name,
+    a.user_last_name as inviter_last_name
   FROM compare_sessions cs
+  LEFT JOIN attempts a ON a.id = cs.attempt_a_id
   WHERE cs.invite_token = token_param;
 END;
 $$;

@@ -3,24 +3,40 @@ import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/app/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/card";
-import { RefreshCw, Link as LinkIcon, Copy } from "lucide-react";
+import { RefreshCw, Link as LinkIcon, Copy, Share2 } from "lucide-react";
 import { toast } from "sonner";
-import { copyText } from "@/features/share/shareClient";
+import { copyText, shareOrCopyText } from "@/features/share/shareClient";
 import { computeSimilarity } from "@/features/compare/computeSimilarity";
 import { useAnonAuth } from "@/hooks/useAnonAuth";
 import { trackShareEvent } from "@/lib/trackShareEvent";
+import { AppModal } from "@/components/AppModal";
+import { createCompareInvite } from "@/features/compare/createCompareInvite";
+import { getLatestCompletedAttempt } from "@/features/compare/getLatestCompletedAttempt";
 import {
   DIMENSION_DEFINITIONS,
   getAlignmentLabel,
   getLargestDifferenceDimension,
+  getLargestSimilarityDimension,
   generateCentralInterpretation,
   generateNeutralBlendedInterpretation,
   getContextualTriggers,
+  getCombinedContextualTriggers,
+  getSeenUnseenConsequences,
   CONVERSATION_STARTERS,
   SAFETY_STATEMENT,
   getDimensionNameForSnapshot,
   shouldShowCTA,
   generateSafeShareText,
+  getMisunderstandingRisk,
+  getMisunderstandingRiskText,
+  getTopDimensionForPerson,
+  generateMindSnapshot,
+  generateMisunderstandingLoop,
+  generateEmotionalExperience,
+  getSimilarityComplementarySentence,
+  generateDimensionSummary,
+  getSimilaritiesAndDifferences,
+  getConversationStarters,
 } from "@/features/compare/relationalContent";
 import type { DimensionKey } from "@/domain/quiz/types";
 import { levelOfDimension } from "@/domain/quiz/dimensions";
@@ -37,7 +53,7 @@ type CompareSession = {
 
 type AttemptData = {
   id: string;
-  user_first_name: string;
+  user_first_name: string | null; // Allow null to preserve RPC values, fallback applied at display time
   user_last_name: string | null;
   total_score: number;
   dimension_scores: Record<DimensionKey, number>;
@@ -55,13 +71,17 @@ type ComparePayloadRPCResponse = {
   attempt_b_id: string | null;
   expires_at: string | null;
   a_total_score: number | null;
-  a_dimension_scores: Record<DimensionKey, number> | null;
+  a_dimension_scores: Record<DimensionKey, number> | null | unknown; // Can be jsonb, string, or null
   a_score_band_id: number | null;
   a_score_band_title: string | null;
+  a_user_first_name: string | null;
+  a_user_last_name: string | null;
   b_total_score: number | null;
-  b_dimension_scores: Record<DimensionKey, number> | null;
+  b_dimension_scores: Record<DimensionKey, number> | null | unknown; // Can be jsonb, string, or null
   b_score_band_id: number | null;
   b_score_band_title: string | null;
+  b_user_first_name: string | null;
+  b_user_last_name: string | null;
 };
 
 type ScoreBand = {
@@ -76,14 +96,15 @@ type DimensionComparison = {
   aScore: number;
   bScore: number;
   delta: number;
-  relation: "similar" | "different";
+  relation: "similar" | "different" | "very_different";
+  direction: "a_higher" | "b_higher" | "equal";
   aLevel: "low" | "medium" | "high";
   bLevel: "low" | "medium" | "high";
 };
 
 const DIMENSION_LABELS: Record<DimensionKey, string> = {
   stickiness: "چسبندگی فکری",
-  pastBrooding: "نشخوار گذشته",
+  pastBrooding: "بازگشت به گذشته",
   futureWorry: "نگرانی آینده",
   interpersonal: "حساسیت بین‌فردی",
 };
@@ -105,22 +126,57 @@ const LEVEL_LABELS: Record<"low" | "medium" | "high", string> = {
  * Safely parses dimension_scores from various formats (string, object, null).
  * Returns a Record with defaults (0) for missing dimensions.
  */
+type DimensionScoresResult = {
+  scores: Record<DimensionKey, number>;
+  validDimensions: DimensionKey[];
+  hasUnknown: boolean;
+};
+
 function parseDimensionScores(
   raw: unknown,
   context: string
-): Record<DimensionKey, number> {
-  const defaults: Record<DimensionKey, number> = {
-    stickiness: 0,
-    pastBrooding: 0,
-    futureWorry: 0,
-    interpersonal: 0,
-  };
+): DimensionScoresResult {
+  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
+  const scores: Record<DimensionKey, number> = {} as Record<DimensionKey, number>;
+  const validDimensions: DimensionKey[] = [];
+  let hasUnknown = false;
 
+  // Only mark as unknown if truly null/undefined - not if it's a valid object
   if (raw === null || raw === undefined) {
     if (import.meta.env.DEV) {
-      console.warn(`[parseDimensionScores] ${context}: raw is null/undefined, using defaults`);
+      console.warn(`[parseDimensionScores] ${context}: raw is null/undefined, marking all as unknown`);
     }
-    return defaults;
+    // Mark all as unknown (use NaN to indicate unknown)
+    for (const key of dimensionKeys) {
+      scores[key] = NaN;
+    }
+    return { scores, validDimensions, hasUnknown: true };
+  }
+  
+  // If it's already a valid object with dimension keys, parse it directly
+  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+    const rawObj = raw as Record<string, unknown>;
+    const hasValidKeys = dimensionKeys.some(key => key in rawObj);
+    if (hasValidKeys) {
+      // Direct object with dimension keys - parse immediately
+      for (const key of dimensionKeys) {
+        const value = rawObj[key];
+        if (typeof value === "number" && !isNaN(value)) {
+          scores[key] = value;
+          validDimensions.push(key);
+        } else {
+          scores[key] = NaN;
+          hasUnknown = true;
+        }
+      }
+      if (import.meta.env.DEV) {
+        console.log(`[parseDimensionScores] ${context}: Parsed directly from object:`, {
+          validDimensions,
+          scores,
+        });
+      }
+      return { scores, validDimensions, hasUnknown };
+    }
   }
 
   let parsed: Record<string, unknown>;
@@ -133,33 +189,50 @@ function parseDimensionScores(
       if (import.meta.env.DEV) {
         console.error(`[parseDimensionScores] ${context}: Failed to parse string:`, e);
       }
-      return defaults;
+      // Return all unknown if parse fails
+      for (const key of dimensionKeys) {
+        scores[key] = NaN;
     }
-  } else if (typeof raw === "object") {
+      return { scores, validDimensions, hasUnknown: true };
+    }
+  } else if (typeof raw === "object" && raw !== null) {
     parsed = raw as Record<string, unknown>;
   } else {
     if (import.meta.env.DEV) {
       console.warn(`[parseDimensionScores] ${context}: Unexpected type:`, typeof raw);
     }
-    return defaults;
+    // Return all unknown for unexpected types
+    for (const key of dimensionKeys) {
+      scores[key] = NaN;
+    }
+    return { scores, validDimensions, hasUnknown: true };
   }
 
-  // Safely extract each dimension with defaults
-  const result: Record<DimensionKey, number> = {
-    stickiness: typeof parsed.stickiness === "number" ? parsed.stickiness : defaults.stickiness,
-    pastBrooding: typeof parsed.pastBrooding === "number" ? parsed.pastBrooding : defaults.pastBrooding,
-    futureWorry: typeof parsed.futureWorry === "number" ? parsed.futureWorry : defaults.futureWorry,
-    interpersonal: typeof parsed.interpersonal === "number" ? parsed.interpersonal : defaults.interpersonal,
-  };
-
-  if (import.meta.env.DEV) {
-    const missing = Object.entries(result).filter(([key, val]) => val === defaults[key as DimensionKey]);
-    if (missing.length > 0) {
-      console.warn(`[parseDimensionScores] ${context}: Missing dimensions, using defaults:`, missing.map(([k]) => k));
+  // Safely extract each dimension - use NaN for unknown/missing
+  for (const key of dimensionKeys) {
+    const value = parsed[key];
+    if (typeof value === "number" && !isNaN(value)) {
+      scores[key] = value;
+      validDimensions.push(key);
+    } else {
+      scores[key] = NaN; // Mark as unknown
+      hasUnknown = true;
     }
   }
 
-  return result;
+  if (import.meta.env.DEV) {
+    const unknownCount = dimensionKeys.length - validDimensions.length;
+    if (unknownCount > 0) {
+      console.warn(`[parseDimensionScores] ${context}: ${unknownCount} dimension(s) are unknown/missing:`, 
+        dimensionKeys.filter(k => !validDimensions.includes(k)));
+    }
+    const allUnknown = validDimensions.length === 0;
+    if (allUnknown && raw !== null && raw !== undefined) {
+      console.error(`[parseDimensionScores] ${context}: ⚠️ CRITICAL - All dimensions are unknown! Raw value:`, raw);
+    }
+  }
+
+  return { scores, validDimensions, hasUnknown };
 }
 
 /**
@@ -169,6 +242,10 @@ function buildComparison(
   attemptA: AttemptData,
   attemptB: AttemptData
 ): Comparison {
+  // Threshold constants for relation calculation
+  const SIMILAR_THRESHOLD = 0.8;
+  const DIFFERENT_THRESHOLD = 1.6;
+
   const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
 
   const dimensions: Record<DimensionKey, DimensionComparison> = {} as Record<
@@ -181,34 +258,113 @@ function buildComparison(
   const aDims = attemptA.dimension_scores ?? {};
   const bDims = attemptB.dimension_scores ?? {};
 
-  for (const key of dimensionKeys) {
-    // Use safe access with defaults
-    const aScore = (aDims[key] ?? 0) as number;
-    const bScore = (bDims[key] ?? 0) as number;
-    const delta = Math.round(Math.abs(aScore - bScore) * 10) / 10;
-    const relation = delta < 0.8 ? "similar" : "different";
+  // Track valid dimensions
+  const validDimensions: DimensionKey[] = [];
 
-    if (relation === "similar") {
-      similarCount++;
+  for (const key of dimensionKeys) {
+    // Use safe access - check for NaN (unknown)
+    const aScoreRaw = aDims[key];
+    const bScoreRaw = bDims[key];
+    const aScore = (typeof aScoreRaw === "number" && !isNaN(aScoreRaw)) ? aScoreRaw : NaN;
+    const bScore = (typeof bScoreRaw === "number" && !isNaN(bScoreRaw)) ? bScoreRaw : NaN;
+    
+    // If either score is unknown, mark dimension as unknown
+    const isUnknown = isNaN(aScore) || isNaN(bScore);
+    const delta = isUnknown ? NaN : Math.round(Math.abs(aScore - bScore) * 10) / 10;
+    
+    if (!isUnknown) {
+      validDimensions.push(key);
     }
 
+    let relation: "similar" | "different" | "very_different";
+    if (isUnknown) {
+      relation = "similar"; // Default for unknown
+    } else if (delta < SIMILAR_THRESHOLD) {
+      relation = "similar";
+      similarCount++;
+    } else if (delta < DIFFERENT_THRESHOLD) {
+      relation = "different";
+    } else {
+      relation = "very_different";
+    }
+
+    // Determine direction
+    let direction: "a_higher" | "b_higher" | "equal";
+    if (isUnknown) {
+      direction = "equal"; // Default for unknown
+    } else if (Math.abs(aScore - bScore) < 0.1) {
+      direction = "equal";
+    } else if (aScore > bScore) {
+      direction = "a_higher";
+    } else {
+      direction = "b_higher";
+    }
+
+    const aLevel = isUnknown ? "low" : levelOfDimension(aScore);
+    const bLevel = isUnknown ? "low" : levelOfDimension(bScore);
+
     dimensions[key] = {
-      aScore,
-      bScore,
-      delta,
+      aScore: isUnknown ? 0 : aScore, // Use 0 for display if unknown
+      bScore: isUnknown ? 0 : bScore,
+      delta: isUnknown ? 0 : delta,
       relation,
-      aLevel: levelOfDimension(aScore),
-      bLevel: levelOfDimension(bScore),
+      direction,
+      aLevel,
+      bLevel,
     };
+
+    // Comprehensive debug logging for each dimension
+    if (import.meta.env.DEV) {
+      const isHighHighDifferent = (aLevel === "high" && bLevel === "high" && relation !== "similar");
+      console.log(`[buildComparison] Dimension ${key}:`, {
+        aScore, bScore, delta,
+        aLevel, bLevel, relation,
+        thresholds: {
+          similar: SIMILAR_THRESHOLD,
+          different: DIFFERENT_THRESHOLD,
+        },
+        // Validation
+        isHighHighDifferent,
+        explanation: isHighHighDifferent
+          ? "Both high but delta >= 0.8 (different) - this is valid but may be confusing"
+          : "OK"
+      });
+    }
   }
 
+  // Calculate similarity based on valid dimensions only
+  const validDimensionsCount = validDimensions.length;
   let summarySimilarity: "low" | "medium" | "high";
+  
+  if (validDimensionsCount === 0) {
+    // No valid dimensions - default to low
+    summarySimilarity = "low";
+  } else if (validDimensionsCount <= 2) {
+    // 1-2 valid dimensions
+    if (similarCount <= 1) {
+      summarySimilarity = "low";
+    } else {
+      summarySimilarity = "medium";
+    }
+  } else {
+    // 3-4 valid dimensions
   if (similarCount <= 1) {
     summarySimilarity = "low";
   } else if (similarCount === 2) {
     summarySimilarity = "medium";
   } else {
     summarySimilarity = "high";
+    }
+  }
+
+  if (import.meta.env.DEV) {
+    console.log("[buildComparison] Summary:", {
+      validDimensionsCount,
+      similarCount,
+      summarySimilarity,
+      validDimensions,
+      totalDimensions: dimensionKeys.length,
+    });
   }
 
   return {
@@ -230,8 +386,50 @@ function getDeltaLabel(delta: number, aScore: number, bScore: number): string {
   return "کمتر";
 }
 
+/**
+ * Formats expires_at date for Persian display
+ */
+function formatExpiresAt(expiresAt: string | null): string {
+  if (!expiresAt) return "";
+  
+  try {
+    const date = new Date(expiresAt);
+    const now = new Date();
+    const diffMs = date.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    
+    if (diffDays <= 0) {
+      return "منقضی شده";
+    } else if (diffDays === 1) {
+      return "تا فردا";
+    } else if (diffDays <= 7) {
+      return `تا ${diffDays} روز دیگر`;
+    } else {
+      const diffWeeks = Math.floor(diffDays / 7);
+      return `تا ${diffWeeks} هفته دیگر`;
+    }
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.error("[formatExpiresAt] Error formatting date:", error);
+    }
+    return "";
+  }
+}
+
 export default function CompareResultPage() {
+  // #region agent log - Safety: Log render start
+  console.log("[CompareResultPage] 🟢 Render start");
+  // #endregion
+  
   const { token } = useParams<{ token: string }>();
+  
+  // #region agent log - Safety: Log token parse
+  console.log("[CompareResultPage] 🔍 Token parsed:", {
+    token: token ? token.substring(0, 12) + "..." : null,
+    hasToken: !!token,
+  });
+  // #endregion
+  
   const navigate = useNavigate();
   const { userId } = useAnonAuth();
   const [loading, setLoading] = useState(true);
@@ -245,9 +443,34 @@ export default function CompareResultPage() {
   const [pollingCount, setPollingCount] = useState(0);
   const [isExpired, setIsExpired] = useState(false);
   const [isCreatingInvite, setIsCreatingInvite] = useState(false);
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [inviteData, setInviteData] = useState<{
+    token: string;
+    url: string;
+    expiresAt: string;
+  } | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const maxPollingTime = 60000; // 60 seconds
   const pollingInterval = 2000; // 2 seconds
+  
+  // DEV: Track RPC data for diagnostics
+  const [devRpcData, setDevRpcData] = useState<any>(null);
+  const [devLastError, setDevLastError] = useState<any>(null);
+  
+  // CRITICAL: Declare dimensionKeys at component level to avoid TDZ
+  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"] as const;
+
+  // DEV: Log component mount
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 🟢 Component mounted:", {
+        token: token ? token.substring(0, 12) + "..." : "N/A",
+        pathname: window.location.pathname,
+        search: window.location.search,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }, [token]);
 
   // Load compare payload using RPC (bypasses RLS)
   const loadComparePayload = async (): Promise<ComparePayloadRPCResponse | null> => {
@@ -259,10 +482,52 @@ export default function CompareResultPage() {
         console.log("[CompareResultPage] RPC Payload:", { p_token: token.substring(0, 12) + "..." });
         }
 
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:376',message:'RPC call start',data:{token:token?.substring(0,12)+'...'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C'})}).catch(()=>{});
+      // #endregion
+
       const { data: rpcData, error: rpcError } = await supabase.rpc(
         "get_compare_payload_by_token",
           { p_token: token }
         );
+
+      // DEV: Store RPC data for diagnostics
+      if (import.meta.env.DEV) {
+        setDevRpcData(rpcData);
+        // CRITICAL: Log Object.keys for RPC mapping verification
+        const rpcKeys = rpcData && typeof rpcData === "object" && !Array.isArray(rpcData) 
+          ? Object.keys(rpcData) 
+          : Array.isArray(rpcData) && rpcData.length > 0 && typeof rpcData[0] === "object"
+          ? Object.keys(rpcData[0])
+          : null;
+        console.log("[CompareResultPage] 🔵 RPC Response (raw):", {
+          hasError: !!rpcError,
+          errorCode: rpcError?.code,
+          errorMessage: rpcError?.message,
+          hasData: !!rpcData,
+          dataType: Array.isArray(rpcData) ? "array" : typeof rpcData,
+          dataLength: Array.isArray(rpcData) ? rpcData.length : null,
+          dataKeys: rpcKeys,
+          dataKeysString: rpcKeys ? rpcKeys.join(", ") : "N/A",
+          rawData: rpcData,
+        });
+        // Explicit log for RPC field mapping verification
+        if (rpcKeys) {
+          console.log("[CompareResultPage] 📋 RPC Field Mapping Check:", {
+            allKeys: rpcKeys,
+            has_a_user_first_name: rpcKeys.includes("a_user_first_name"),
+            has_b_user_first_name: rpcKeys.includes("b_user_first_name"),
+            has_a_dimension_scores: rpcKeys.includes("a_dimension_scores"),
+            has_b_dimension_scores: rpcKeys.includes("b_dimension_scores"),
+            has_names: rpcKeys.some(k => k.includes("name") || k.includes("first") || k.includes("last")),
+            has_dimensions: rpcKeys.some(k => k.includes("dimension") || k.includes("dims")),
+          });
+        }
+      }
+
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:383',message:'RPC response',data:{hasError:!!rpcError,errorCode:rpcError?.code,errorMessage:rpcError?.message,hasData:!!rpcData,dataType:Array.isArray(rpcData)?'array':typeof rpcData,dataLength:Array.isArray(rpcData)?rpcData.length:null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B'})}).catch(()=>{});
+      // #endregion
 
       if (rpcError) {
           if (import.meta.env.DEV) {
@@ -271,8 +536,14 @@ export default function CompareResultPage() {
             message: rpcError.message,
             details: rpcError.details,
             hint: rpcError.hint,
+            stack: rpcError.stack,
+            fullError: rpcError,
           });
+          setDevLastError(rpcError);
         }
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:390',message:'RPC error - returning null',data:{code:rpcError.code,message:rpcError.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
         return null;
       }
 
@@ -283,6 +554,9 @@ export default function CompareResultPage() {
           if (import.meta.env.DEV) {
             console.log("[CompareResultPage] RPC returned empty array - no session found");
           }
+          // #region agent log
+          fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:396',message:'RPC returned empty array',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
           return null;
         }
         resultRow = rpcData[0] as ComparePayloadRPCResponse;
@@ -292,33 +566,145 @@ export default function CompareResultPage() {
         if (import.meta.env.DEV) {
           console.error("[CompareResultPage] ❌ Invalid RPC response format:", rpcData);
         }
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:405',message:'Invalid RPC response format',data:{dataType:typeof rpcData},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
         return null;
       }
 
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:410',message:'RPC result row extracted',data:{status:resultRow.status,hasAttemptB:!!resultRow.attempt_b_id,bTotalScore:resultRow.b_total_score,bDimensionScores:resultRow.b_dimension_scores!==null?'present':'null'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C,D,E'})}).catch(()=>{});
+      // #endregion
+
+      // Quick Verification Log (30-second test)
       if (import.meta.env.DEV) {
-        console.log("[CompareResultPage] ✅ RPC Response:", {
+        console.log("[CompareResultPage] RPC keys:", Object.keys(resultRow || {}));
+        console.log("[CompareResultPage] Names raw:", {
+          a_user_first_name: (resultRow as any).a_user_first_name,
+          a_first: (resultRow as any).a_first,
+          b_user_first_name: (resultRow as any).b_user_first_name,
+          b_first: (resultRow as any).b_first,
+        });
+      }
+
+      if (import.meta.env.DEV) {
+        console.log("[CompareResultPage] ✅ RPC Response (raw):", {
+          token: token ? token.substring(0, 12) + "..." : "N/A",
+          allKeys: Object.keys(resultRow),
+          allKeysString: Object.keys(resultRow).join(", "),
           session_id: resultRow.session_id,
           status: resultRow.status,
           attempt_a_id: resultRow.attempt_a_id,
           attempt_b_id: resultRow.attempt_b_id,
           a_total_score: resultRow.a_total_score,
           b_total_score: resultRow.b_total_score,
+          a_dimension_scores_raw: resultRow.a_dimension_scores,
+          b_dimension_scores_raw: resultRow.b_dimension_scores,
+          a_dimension_scores_type: typeof resultRow.a_dimension_scores,
+          b_dimension_scores_type: typeof resultRow.b_dimension_scores,
+          a_dimension_scores_is_null: resultRow.a_dimension_scores === null,
+          b_dimension_scores_is_null: resultRow.b_dimension_scores === null,
           a_score_band_title: resultRow.a_score_band_title,
           b_score_band_title: resultRow.b_score_band_title,
+          // Name fields from RPC - check all possible key variations
+          a_user_first_name: resultRow.a_user_first_name,
+          a_user_last_name: resultRow.a_user_last_name,
+          b_user_first_name: resultRow.b_user_first_name,
+          b_user_last_name: resultRow.b_user_last_name,
+          // Check for nested structures
+          has_attempt_a: !!(resultRow as any).attempt_a,
+          has_attempt_b: !!(resultRow as any).attempt_b,
+          attempt_a_keys: (resultRow as any).attempt_a ? Object.keys((resultRow as any).attempt_a) : null,
+          attempt_b_keys: (resultRow as any).attempt_b ? Object.keys((resultRow as any).attempt_b) : null,
+          // Check alternative key names
+          a_first_name: (resultRow as any).a_first_name,
+          a_last_name: (resultRow as any).a_last_name,
+          b_first_name: (resultRow as any).b_first_name,
+          b_last_name: (resultRow as any).b_last_name,
+          a_dims: (resultRow as any).a_dims,
+          b_dims: (resultRow as any).b_dims,
+          a_name_present: !!(resultRow.a_user_first_name),
+          b_name_present: !!(resultRow.b_user_first_name),
+          fullRawData: resultRow, // Full object for inspection
+        });
+        
+        // CRITICAL: Explicit RPC field verification for name fields
+        console.log("[CompareResultPage] 📋 RPC Name Fields Verification:", {
+          rpcKeys: Object.keys(resultRow),
+          a_user_first_name: {
+            value: resultRow.a_user_first_name,
+            type: typeof resultRow.a_user_first_name,
+            isNull: resultRow.a_user_first_name === null,
+            isUndefined: resultRow.a_user_first_name === undefined,
+            isEmptyString: resultRow.a_user_first_name === "",
+            truthy: !!resultRow.a_user_first_name,
+          },
+          a_user_last_name: {
+            value: resultRow.a_user_last_name,
+            type: typeof resultRow.a_user_last_name,
+            isNull: resultRow.a_user_last_name === null,
+            isUndefined: resultRow.a_user_last_name === undefined,
+            isEmptyString: resultRow.a_user_last_name === "",
+          },
+          b_user_first_name: {
+            value: resultRow.b_user_first_name,
+            type: typeof resultRow.b_user_first_name,
+            isNull: resultRow.b_user_first_name === null,
+            isUndefined: resultRow.b_user_first_name === undefined,
+            isEmptyString: resultRow.b_user_first_name === "",
+            truthy: !!resultRow.b_user_first_name,
+          },
+          b_user_last_name: {
+            value: resultRow.b_user_last_name,
+            type: typeof resultRow.b_user_last_name,
+            isNull: resultRow.b_user_last_name === null,
+            isUndefined: resultRow.b_user_last_name === undefined,
+            isEmptyString: resultRow.b_user_last_name === "",
+          },
         });
       }
 
       return resultRow;
     } catch (err) {
       if (import.meta.env.DEV) {
-        console.error("[CompareResultPage] ❌ Error calling RPC:", err);
+        const errorDetails = err instanceof Error ? {
+          name: err.name,
+          message: err.message,
+          stack: err.stack,
+        } : { raw: err };
+        console.error("[CompareResultPage] ❌ Error calling RPC:", {
+          error: err,
+          errorDetails,
+          token: token ? token.substring(0, 12) + "..." : "N/A",
+        });
+        setDevLastError(err);
       }
       return null;
     }
   };
 
   // Process RPC response and set state
-  const processCompareData = (rpcData: ComparePayloadRPCResponse) => {
+  const processCompareData = async (rpcData: ComparePayloadRPCResponse) => {
+    // DEV: Log before building comparison
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 🔍 processCompareData entry:", {
+        status: rpcData.status,
+        hasAttemptB: !!rpcData.attempt_b_id,
+        attempt_a_id: rpcData.attempt_a_id?.substring(0, 8) + "..." || "null",
+        attempt_b_id: rpcData.attempt_b_id?.substring(0, 8) + "..." || "null",
+        aTotalScore: rpcData.a_total_score,
+        bTotalScore: rpcData.b_total_score,
+        aDimScores: rpcData.a_dimension_scores !== null ? "present" : "null",
+        bDimScores: rpcData.b_dimension_scores !== null ? "present" : "null",
+        aDimScoresType: typeof rpcData.a_dimension_scores,
+        bDimScoresType: typeof rpcData.b_dimension_scores,
+      });
+    }
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:448',message:'processCompareData entry',data:{status:rpcData.status,hasAttemptB:!!rpcData.attempt_b_id,aTotalScore:rpcData.a_total_score,bTotalScore:rpcData.b_total_score,aDimScores:rpcData.a_dimension_scores!==null?'present':'null',bDimScores:rpcData.b_dimension_scores!==null?'present':'null'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C,D,E'})}).catch(()=>{});
+    // #endregion
+
     // Set session info
     setSession({
       id: rpcData.session_id,
@@ -351,43 +737,333 @@ export default function CompareResultPage() {
           return;
         }
 
-    // Validate both attempts have total scores (dimension_scores can be null, we'll handle it)
-    if (rpcData.a_total_score === null || rpcData.b_total_score === null) {
+    // Defensive check: Validate both attempts have total scores
+    // If attempt B was deleted, fallback to pending state
+    if (rpcData.a_total_score === null) {
           if (import.meta.env.DEV) {
-        console.error("[CompareResultPage] ❌ Missing total scores in RPC response:", {
-          a_total_score: rpcData.a_total_score,
+        console.error("[CompareResultPage] ❌ Attempt A missing total_score - attempt may be deleted");
+      }
+      setError("اطلاعات آزمون نفر اول یافت نشد.");
+          setLoading(false);
+          return;
+    }
+
+    if (rpcData.b_total_score === null || rpcData.b_dimension_scores === null) {
+      if (import.meta.env.DEV) {
+        console.warn("[CompareResultPage] ⚠️ Attempt B missing total_score or dimension_scores - may still be processing, will poll");
+        console.warn("[CompareResultPage] Attempt B data:", {
           b_total_score: rpcData.b_total_score,
+          b_dimension_scores: rpcData.b_dimension_scores,
+          b_attempt_id: rpcData.attempt_b_id,
         });
       }
-      setError("بخشی از اطلاعات کامل ذخیره نشده، برای همین بعضی قسمت‌ها نمایش داده نمی‌شن.");
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:492',message:'Attempt B missing data - starting polling',data:{bTotalScore:rpcData.b_total_score,bDimScores:rpcData.b_dimension_scores!==null?'present':'null',status:rpcData.status},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
+      // Attempt B not completed yet - start polling
           setLoading(false);
+      startPolling();
           return;
         }
 
     // Safely parse dimension scores (handle null, string, or object)
-    const aDims = parseDimensionScores(rpcData.a_dimension_scores, "Attempt A");
-    const bDims = parseDimensionScores(rpcData.b_dimension_scores, "Attempt B");
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 🔍 Before parsing dimension scores:", {
+        a_dimension_scores_raw: rpcData.a_dimension_scores,
+        b_dimension_scores_raw: rpcData.b_dimension_scores,
+        a_type: typeof rpcData.a_dimension_scores,
+        b_type: typeof rpcData.b_dimension_scores,
+        a_is_null: rpcData.a_dimension_scores === null,
+        b_is_null: rpcData.b_dimension_scores === null,
+        a_is_undefined: rpcData.a_dimension_scores === undefined,
+        b_is_undefined: rpcData.b_dimension_scores === undefined,
+      });
+    }
+    
+    // Parse dimension scores - use mapped values (handle multiple shapes)
+    // Declare rpcAny once for the entire function scope
+    const rpcAny = rpcData as any;
+    
+    let aDimsRaw = rpcData.a_dimension_scores;
+    let bDimsRaw = rpcData.b_dimension_scores;
+    
+    // Check for nested or alternative keys
+    if (rpcAny.attempt_a?.dimension_scores) {
+      aDimsRaw = rpcAny.attempt_a.dimension_scores;
+    } else if (rpcAny.a_dims) {
+      aDimsRaw = rpcAny.a_dims;
+    }
+    if (rpcAny.attempt_b?.dimension_scores) {
+      bDimsRaw = rpcAny.attempt_b.dimension_scores;
+    } else if (rpcAny.b_dims) {
+      bDimsRaw = rpcAny.b_dims;
+    }
+    
+    const aDimsResult = parseDimensionScores(aDimsRaw, "Attempt A");
+    const bDimsResult = parseDimensionScores(bDimsRaw, "Attempt B");
+    
+      if (import.meta.env.DEV) {
+        console.log("[CompareResultPage] ✅ Attempt IDs validated:", {
+          attemptA_id: rpcData.attempt_a_id.substring(0, 8) + "...",
+          attemptB_id: rpcData.attempt_b_id?.substring(0, 8) + "..." || "null",
+          a_user_first_name: rpcData.a_user_first_name,
+          a_user_last_name: rpcData.a_user_last_name,
+          b_user_first_name: rpcData.b_user_first_name,
+          b_user_last_name: rpcData.b_user_last_name,
+        });
+        console.log("[CompareResultPage] 🔍 After parsing dimension scores:", {
+          aDims: aDimsResult.scores,
+          bDims: bDimsResult.scores,
+          aValidDimensions: aDimsResult.validDimensions,
+          bValidDimensions: bDimsResult.validDimensions,
+          aHasUnknown: aDimsResult.hasUnknown,
+          bHasUnknown: bDimsResult.hasUnknown,
+          aDims_sum: aDimsResult.validDimensions.reduce((sum, k) => sum + aDimsResult.scores[k], 0),
+          bDims_sum: bDimsResult.validDimensions.reduce((sum, k) => sum + bDimsResult.scores[k], 0),
+        });
+      }
 
-    // Build AttemptData objects (without user names - RPC doesn't return them)
+    // Build AttemptData objects - handle multiple RPC response shapes
+    // CRITICAL: Defensive Normalizer - supports both new and old aliases, flat and nested structures
+    // This ensures we read names correctly even if RPC contract changes or is deployed incorrectly
+    // Priority: 1) Flat fields (a_user_first_name), 2) Nested (attempt_a.user_first_name), 3) Old aliases (a_first)
+    const aFirst = (rpcData as any).a_user_first_name 
+      ?? (rpcData as any).attempt_a?.user_first_name 
+      ?? (rpcData as any).a_first 
+      ?? null;
+    const aLast  = (rpcData as any).a_user_last_name  
+      ?? (rpcData as any).attempt_a?.user_last_name  
+      ?? (rpcData as any).a_last  
+      ?? null;
+    const bFirst = (rpcData as any).b_user_first_name 
+      ?? (rpcData as any).attempt_b?.user_first_name 
+      ?? (rpcData as any).b_first 
+      ?? null;
+    const bLast  = (rpcData as any).b_user_last_name  
+      ?? (rpcData as any).attempt_b?.user_last_name  
+      ?? (rpcData as any).b_last  
+      ?? null;
+    
+    // Store raw values (null or string) - NO fallback here
+    let attemptAFirstName: string | null = aFirst;
+    let attemptALastName: string | null = aLast;
+    let attemptBFirstName: string | null = bFirst;
+    let attemptBLastName: string | null = bLast;
+    let attemptATotalScore: number | null = rpcData.a_total_score;
+    let attemptBTotalScore: number | null = rpcData.b_total_score;
+    
+    // Fallback to nested structure if flat fields are null/undefined (for backward compatibility)
+    if (!attemptAFirstName && rpcAny.attempt_a && typeof rpcAny.attempt_a === "object") {
+      attemptAFirstName = rpcAny.attempt_a.user_first_name || rpcAny.attempt_a.first_name || null;
+      attemptALastName = rpcAny.attempt_a.user_last_name || rpcAny.attempt_a.last_name || null;
+      attemptATotalScore = rpcAny.attempt_a.total_score || rpcAny.attempt_a.totalScore || attemptATotalScore;
+    }
+    if (!attemptBFirstName && rpcAny.attempt_b && typeof rpcAny.attempt_b === "object") {
+      attemptBFirstName = rpcAny.attempt_b.user_first_name || rpcAny.attempt_b.first_name || null;
+      attemptBLastName = rpcAny.attempt_b.user_last_name || rpcAny.attempt_b.last_name || null;
+      attemptBTotalScore = rpcAny.attempt_b.total_score || rpcAny.attempt_b.totalScore || attemptBTotalScore;
+    }
+    
+    // CRITICAL: Fallback fetch from attempts table if RPC didn't return names
+    // Check if names are missing (null, undefined, or empty string)
+    const needsFetchA = !attemptAFirstName || (typeof attemptAFirstName === "string" && attemptAFirstName.trim() === "");
+    const needsFetchB = !attemptBFirstName || (typeof attemptBFirstName === "string" && attemptBFirstName.trim() === "");
+    
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 🔍 Name fetch check:", {
+        token: token ? token.substring(0, 12) + "..." : "N/A",
+        attempt_a_id: rpcData.attempt_a_id,
+        attempt_b_id: rpcData.attempt_b_id,
+        rpc_a_user_first_name: rpcData.a_user_first_name,
+        rpc_b_user_first_name: rpcData.b_user_first_name,
+        current_attemptAFirstName: attemptAFirstName,
+        current_attemptBFirstName: attemptBFirstName,
+        needsFetchA,
+        needsFetchB,
+      });
+    }
+    
+    // Fetch names from attempts table if needed
+    if (needsFetchA && rpcData.attempt_a_id) {
+      try {
+        const { data: attemptA, error: errorA } = await supabase
+          .from("attempts")
+          .select("user_first_name, user_last_name")
+          .eq("id", rpcData.attempt_a_id)
+          .single();
+        
+        if (import.meta.env.DEV) {
+          console.log("[CompareResultPage] 🔍 Fetched Attempt A names:", {
+            attempt_a_id: rpcData.attempt_a_id,
+            fetched: attemptA,
+            error: errorA,
+            user_first_name: attemptA?.user_first_name,
+            user_last_name: attemptA?.user_last_name,
+          });
+        }
+        
+        if (!errorA && attemptA) {
+          attemptAFirstName = attemptA.user_first_name || null;
+          attemptALastName = attemptA.user_last_name || null;
+        } else if (import.meta.env.DEV) {
+          console.warn("[CompareResultPage] ⚠️ Failed to fetch Attempt A names:", errorA);
+        }
+      } catch (err) {
+        if (import.meta.env.DEV) {
+          console.error("[CompareResultPage] ❌ Error fetching Attempt A names:", err);
+        }
+      }
+    }
+    
+    if (needsFetchB && rpcData.attempt_b_id) {
+      try {
+        const { data: attemptB, error: errorB } = await supabase
+          .from("attempts")
+          .select("user_first_name, user_last_name")
+          .eq("id", rpcData.attempt_b_id)
+          .single();
+        
+        if (import.meta.env.DEV) {
+          console.log("[CompareResultPage] 🔍 Fetched Attempt B names:", {
+            attempt_b_id: rpcData.attempt_b_id,
+            fetched: attemptB,
+            error: errorB,
+            user_first_name: attemptB?.user_first_name,
+            user_last_name: attemptB?.user_last_name,
+          });
+        }
+        
+        if (!errorB && attemptB) {
+          attemptBFirstName = attemptB.user_first_name || null;
+          attemptBLastName = attemptB.user_last_name || null;
+        } else if (import.meta.env.DEV) {
+          console.warn("[CompareResultPage] ⚠️ Failed to fetch Attempt B names:", errorB);
+        }
+      } catch (err) {
+        if (import.meta.env.DEV) {
+          console.error("[CompareResultPage] ❌ Error fetching Attempt B names:", err);
+        }
+      }
+    }
+    
+    // Use parsed dimension scores (will handle null/undefined gracefully)
+    // NOTE: Do NOT apply fallback here - preserve null/undefined values
+    // Fallback will be applied only at display time (in name computation)
+    const attemptAFirstNameFinal = attemptAFirstName; // Keep null/undefined, no fallback
+    const attemptBFirstNameFinal = attemptBFirstName; // Keep null/undefined, no fallback
+    
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 🔍 Final names before AttemptData:", {
+        attemptAFirstNameFinal,
+        attemptALastName,
+        attemptBFirstNameFinal,
+        attemptBLastName,
+        source: {
+          a: needsFetchA && attemptAFirstName ? "fetched" : "rpc",
+          b: needsFetchB && attemptBFirstName ? "fetched" : "rpc",
+        },
+      });
+    }
+    
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 🔍 Mapped RPC fields:", {
+        attemptAFirstName,
+        attemptALastName,
+        attemptBFirstName,
+        attemptBLastName,
+        attemptATotalScore,
+        attemptBTotalScore,
+        aDimsRaw: aDimsRaw,
+        bDimsRaw: bDimsRaw,
+        aDimsRawType: typeof aDimsRaw,
+        bDimsRawType: typeof bDimsRaw,
+        aDimsRawIsNull: aDimsRaw === null,
+        bDimsRawIsNull: bDimsRaw === null,
+        rpcKeys: Object.keys(rpcData).join(", "),
+        // CRITICAL: Log raw RPC name fields to verify they're being returned
+        rpc_a_user_first_name: rpcData.a_user_first_name,
+        rpc_a_user_last_name: rpcData.a_user_last_name,
+        rpc_b_user_first_name: rpcData.b_user_first_name,
+        rpc_b_user_last_name: rpcData.b_user_last_name,
+        rpc_a_user_first_name_type: typeof rpcData.a_user_first_name,
+        rpc_b_user_first_name_type: typeof rpcData.b_user_first_name,
+        rpc_a_user_first_name_is_null: rpcData.a_user_first_name === null,
+        rpc_b_user_first_name_is_null: rpcData.b_user_first_name === null,
+        // Log normalizer results
+        normalizer_aFirst: aFirst,
+        normalizer_aLast: aLast,
+        normalizer_bFirst: bFirst,
+        normalizer_bLast: bLast,
+        // Log nested structure if exists
+        has_attempt_a: !!(rpcAny.attempt_a),
+        has_attempt_b: !!(rpcAny.attempt_b),
+        attempt_a_user_first_name: rpcAny.attempt_a?.user_first_name,
+        attempt_b_user_first_name: rpcAny.attempt_b?.user_first_name,
+      });
+    }
+    
+    // Build AttemptData objects - use scores from parseDimensionScores result
+    // NOTE: Preserve null/undefined values from RPC - do NOT apply fallback here
     const attemptAData: AttemptData = {
       id: rpcData.attempt_a_id,
-      user_first_name: "نفر اول",
-      user_last_name: null,
-      total_score: rpcData.a_total_score,
-      dimension_scores: aDims,
+      user_first_name: attemptAFirstNameFinal, // May be null/undefined - fallback applied at display time
+      user_last_name: attemptALastName,
+      total_score: attemptATotalScore,
+      dimension_scores: aDimsResult.scores, // Use scores from parse result
       score_band_id: rpcData.a_score_band_id,
       completed_at: new Date().toISOString(),
     };
 
     const attemptBData: AttemptData = {
       id: rpcData.attempt_b_id,
-      user_first_name: "نفر دوم",
-      user_last_name: null,
-      total_score: rpcData.b_total_score,
-      dimension_scores: bDims,
+      user_first_name: attemptBFirstNameFinal, // May be null/undefined - fallback applied at display time
+      user_last_name: attemptBLastName,
+      total_score: attemptBTotalScore,
+      dimension_scores: bDimsResult.scores, // Use scores from parse result
       score_band_id: rpcData.b_score_band_id,
       completed_at: new Date().toISOString(),
     };
+    
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 🔍 Built AttemptData objects:", {
+        attemptA: {
+          id: attemptAData.id.substring(0, 8) + "...",
+          user_first_name: attemptAData.user_first_name,
+          user_last_name: attemptAData.user_last_name,
+          total_score: attemptAData.total_score,
+          dimension_scores: attemptAData.dimension_scores,
+          nameSource: rpcData.a_user_first_name ? "RPC" : "fallback",
+        },
+        attemptB: {
+          id: attemptBData.id.substring(0, 8) + "...",
+          user_first_name: attemptBData.user_first_name,
+          user_last_name: attemptBData.user_last_name,
+          total_score: attemptBData.total_score,
+          dimension_scores: attemptBData.dimension_scores,
+          nameSource: rpcData.b_user_first_name ? "RPC" : "fallback",
+        },
+      });
+    }
+
+    // Validate attempt IDs are different
+    if (attemptAData.id === attemptBData.id) {
+      if (import.meta.env.DEV) {
+        console.error("[CompareResultPage] ❌ CRITICAL: Attempt A and B have the same ID!", {
+          attemptA_id: attemptAData.id,
+          attemptB_id: attemptBData.id,
+        });
+      }
+      setError("خطا در داده‌ها: شناسه‌های آزمون یکسان هستند.");
+      setLoading(false);
+      return;
+    }
+    
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] ✅ Attempt IDs validated as different:", {
+        attemptA_id: attemptAData.id.substring(0, 8) + "...",
+        attemptB_id: attemptBData.id.substring(0, 8) + "...",
+      });
+    }
 
     setAttemptA(attemptAData);
     setAttemptB(attemptBData);
@@ -421,7 +1097,45 @@ export default function CompareResultPage() {
     }
 
     // Build comparison
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 🔍 Building comparison with:", {
+        attemptA_id: attemptAData.id,
+        attemptB_id: attemptBData.id,
+        attemptA_dimension_scores: attemptAData.dimension_scores,
+        attemptB_dimension_scores: attemptBData.dimension_scores,
+        attemptA_total_score: attemptAData.total_score,
+        attemptB_total_score: attemptBData.total_score,
+      });
+    }
+    
     const builtComparison = buildComparison(attemptAData, attemptBData);
+    
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 🔍 Built comparison dimensions:", {
+        stickiness: {
+          aScore: builtComparison.dimensions.stickiness.aScore,
+          bScore: builtComparison.dimensions.stickiness.bScore,
+          delta: builtComparison.dimensions.stickiness.delta,
+        },
+        pastBrooding: {
+          aScore: builtComparison.dimensions.pastBrooding.aScore,
+          bScore: builtComparison.dimensions.pastBrooding.bScore,
+          delta: builtComparison.dimensions.pastBrooding.delta,
+        },
+        futureWorry: {
+          aScore: builtComparison.dimensions.futureWorry.aScore,
+          bScore: builtComparison.dimensions.futureWorry.bScore,
+          delta: builtComparison.dimensions.futureWorry.delta,
+        },
+        interpersonal: {
+          aScore: builtComparison.dimensions.interpersonal.aScore,
+          bScore: builtComparison.dimensions.interpersonal.bScore,
+          delta: builtComparison.dimensions.interpersonal.delta,
+        },
+        summarySimilarity: builtComparison.summarySimilarity,
+      });
+    }
+    
         const comparisonResult: Comparison = {
       id: `compare-${rpcData.attempt_a_id}-${rpcData.attempt_b_id}`,
           createdAt: new Date().toISOString(),
@@ -452,11 +1166,76 @@ export default function CompareResultPage() {
         console.log("[CompareResultPage] 🔵 Loading compare payload for token:", token.substring(0, 12) + "...");
       }
 
-      const rpcData = await loadComparePayload();
+      let rpcData = await loadComparePayload();
+
+      // Fallback: If RPC returns empty but session might exist, try direct fetch
+      if (!rpcData) {
+        if (import.meta.env.DEV) {
+          console.log("[CompareResultPage] ⚠️ RPC returned null - attempting fallback fetch");
+        }
+        
+        try {
+          // Fallback: Fetch session directly
+          const { data: sessionData, error: sessionError } = await supabase
+            .from("compare_sessions")
+            .select("id, status, attempt_a_id, attempt_b_id, expires_at")
+            .eq("invite_token", token)
+            .maybeSingle();
+          
+          if (sessionData && sessionData.status === "completed" && sessionData.attempt_b_id) {
+            if (import.meta.env.DEV) {
+              console.log("[CompareResultPage] ✅ Fallback: Found completed session, fetching attempts");
+            }
+            
+            // Fetch attempts A and B
+            const { data: attemptsData, error: attemptsError } = await supabase
+              .from("attempts")
+              .select("id, total_score, dimension_scores, user_first_name, user_last_name, score_band_id")
+              .in("id", [sessionData.attempt_a_id, sessionData.attempt_b_id]);
+            
+            if (attemptsData && attemptsData.length === 2) {
+              const attemptA = attemptsData.find(a => a.id === sessionData.attempt_a_id);
+              const attemptB = attemptsData.find(a => a.id === sessionData.attempt_b_id);
+              
+              if (attemptA && attemptB) {
+                // Build payload manually
+                rpcData = {
+                  session_id: sessionData.id,
+                  status: sessionData.status,
+                  invite_token: token,
+                  attempt_a_id: sessionData.attempt_a_id,
+                  attempt_b_id: sessionData.attempt_b_id,
+                  expires_at: sessionData.expires_at,
+                  a_total_score: attemptA.total_score,
+                  a_dimension_scores: attemptA.dimension_scores as any,
+                  a_score_band_id: attemptA.score_band_id,
+                  a_score_band_title: null,
+                  a_user_first_name: attemptA.user_first_name,
+                  a_user_last_name: attemptA.user_last_name,
+                  b_total_score: attemptB.total_score,
+                  b_dimension_scores: attemptB.dimension_scores as any,
+                  b_score_band_id: attemptB.score_band_id,
+                  b_score_band_title: null,
+                  b_user_first_name: attemptB.user_first_name,
+                  b_user_last_name: attemptB.user_last_name,
+                };
+                
+                if (import.meta.env.DEV) {
+                  console.log("[CompareResultPage] ✅ Fallback: Built payload from direct queries");
+                }
+              }
+            }
+          }
+        } catch (fallbackError) {
+          if (import.meta.env.DEV) {
+            console.error("[CompareResultPage] ❌ Fallback fetch failed:", fallbackError);
+          }
+        }
+      }
 
       if (!rpcData) {
         if (import.meta.env.DEV) {
-          console.log("[CompareResultPage] ⚠️ No data returned from RPC - link invalid or expired");
+          console.log("[CompareResultPage] ⚠️ No data after fallback - link invalid or expired");
           console.log("[CompareResultPage] Token:", token ? token.substring(0, 12) + "..." : "N/A");
         }
         setError("این لینک معتبر نیست یا منقضی شده است. لطفاً لینک جدید بسازید.");
@@ -510,19 +1289,58 @@ export default function CompareResultPage() {
         }
 
       // Process completed session
-      processCompareData(rpcData);
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:764',message:'About to process compare data',data:{status:rpcData.status,hasAttemptB:!!rpcData.attempt_b_id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
+      try {
+      await processCompareData(rpcData);
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:768',message:'processCompareData completed successfully',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        } catch (processError) {
+        // DEV: Log process error
+        if (import.meta.env.DEV) {
+          const errorDetails = processError instanceof Error ? {
+            name: processError.name,
+            message: processError.message,
+            stack: processError.stack,
+          } : { raw: processError };
+          console.error("[CompareResultPage] ❌ processCompareData error:", {
+            error: processError,
+            errorDetails,
+            token: token ? token.substring(0, 12) + "..." : "N/A",
+          });
+          setDevLastError(processError);
+        }
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:771',message:'processCompareData threw error',data:{errorMessage:processError instanceof Error?processError.message:'unknown',errorStack:processError instanceof Error?processError.stack:null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        throw processError; // Re-throw to be caught by outer catch
+      }
         setLoading(false);
       } catch (err) {
+        // DEV: Log full error with stack
         if (import.meta.env.DEV) {
-        console.error("[CompareResultPage] ❌ Unexpected error:", err);
-      }
-      // Don't treat this as expired - show a clear dev error
-      if (import.meta.env.DEV) {
-        console.error("[CompareResultPage] ❌ Unexpected error details:", {
+          const errorDetails = err instanceof Error ? {
+            name: err.name,
+            message: err.message,
+            stack: err.stack,
+          } : { raw: err };
+          console.error("[CompareResultPage] ❌ Unexpected error in loadCompareResult:", {
           error: err,
+            errorDetails,
           token: token ? token.substring(0, 12) + "..." : "N/A",
+            loading,
+            session: session ? { id: session.id.substring(0, 8) + "...", status: session.status } : null,
+            attemptA: attemptA ? { id: attemptA.id.substring(0, 8) + "..." } : null,
+            attemptB: attemptB ? { id: attemptB.id.substring(0, 8) + "..." } : null,
+            comparison: comparison ? "exists" : null,
         });
+          setDevLastError(err);
       }
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:780',message:'Caught exception in loadCompareResult',data:{errorMessage:err instanceof Error?err.message:'unknown',errorName:err instanceof Error?err.name:'unknown',hasToken:!!token},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
       setError("یه مشکلی پیش اومده و این مقایسه الان در دسترس نیست. اگه دوباره امتحانش کنی یا لینک جدید بسازی، درست می‌شه.");
         setLoading(false);
@@ -550,9 +1368,10 @@ export default function CompareResultPage() {
 
       try {
         const rpcData = await loadComparePayload();
-        if (rpcData && rpcData.status === "completed" && rpcData.attempt_b_id) {
+        if (rpcData && rpcData.status === "completed" && rpcData.attempt_b_id && 
+            rpcData.b_total_score !== null && rpcData.b_dimension_scores !== null) {
           stopPolling();
-          processCompareData(rpcData);
+          await processCompareData(rpcData);
           setLoading(false);
 
         if (import.meta.env.DEV) {
@@ -596,6 +1415,9 @@ export default function CompareResultPage() {
   }, [token]);
 
   if (loading && !session) {
+    // #region agent log - Safety: Log state branch
+    console.log("[CompareResultPage] 📊 State branch: LOADING (loading && !session)");
+    // #endregion
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="text-center">
@@ -606,6 +1428,9 @@ export default function CompareResultPage() {
   }
 
   if (error) {
+    // #region agent log - Safety: Log state branch
+    console.log("[CompareResultPage] 📊 State branch: ERROR", { error });
+    // #endregion
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="text-center space-y-4 max-w-md">
@@ -620,11 +1445,21 @@ export default function CompareResultPage() {
 
   // Waiting state (pending) - friendly loading with auto-retry
   if (session && (session.status !== "completed" || !session.attemptBId)) {
+    // #region agent log - Safety: Log state branch
+    console.log("[CompareResultPage] 📊 State branch: PENDING", {
+      sessionStatus: session.status,
+      hasAttemptBId: !!session.attemptBId,
+      pollingCount,
+    });
+    // #endregion
     const elapsedSeconds = Math.floor((pollingCount * pollingInterval) / 1000);
     const remainingSeconds = Math.max(0, Math.floor((maxPollingTime - elapsedSeconds * 1000) / 1000));
     const hasTimedOut = elapsedSeconds * 1000 >= maxPollingTime;
 
     if (hasTimedOut) {
+      // #region agent log - Safety: Log state branch
+      console.log("[CompareResultPage] 📊 State branch: PENDING_TIMEOUT");
+      // #endregion
       return (
         <div className="min-h-screen flex items-center justify-center p-4">
           <div className="text-center space-y-4 max-w-md">
@@ -641,6 +1476,9 @@ export default function CompareResultPage() {
     );
   }
 
+    // #region agent log - Safety: Log state branch
+    console.log("[CompareResultPage] 📊 State branch: PENDING_WAITING");
+    // #endregion
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="text-center space-y-6 max-w-md">
@@ -673,6 +1511,13 @@ export default function CompareResultPage() {
 
   // Error: Session completed but attempts missing
   if (session && session.status === "completed" && session.attemptBId && (!attemptA || !attemptB || !comparison)) {
+    // #region agent log - Safety: Log state branch
+    console.log("[CompareResultPage] 📊 State branch: ERROR_MISSING_DATA", {
+      hasAttemptA: !!attemptA,
+      hasAttemptB: !!attemptB,
+      hasComparison: !!comparison,
+    });
+    // #endregion
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="text-center space-y-4 max-w-md">
@@ -699,23 +1544,33 @@ export default function CompareResultPage() {
   // STATE A: Only attempt A exists (pending state)
   // Show this if: session exists, status is pending, and attemptB is missing
   if (session && session.status === "pending" && (!session.attemptBId || !attemptB || !comparison)) {
+    // #region agent log - Safety: Log state branch
+    console.log("[CompareResultPage] 📊 State branch: STATE_A_PENDING", {
+      hasAttemptA: !!attemptA,
+      hasAttemptB: !!attemptB,
+      hasComparison: !!comparison,
+    });
+    // #endregion
     const nameA = attemptA?.user_first_name || "شما";
+    
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 🔍 Pending state - computed nameA:", {
+        nameA,
+        attemptA_user_first_name: attemptA?.user_first_name,
+        attemptA_user_last_name: attemptA?.user_last_name,
+      });
+    }
     const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
     
     const handleCreateInvite = async () => {
-      if (!userId) {
-        toast.error("لطفاً ابتدا وارد شوید");
-        return;
-      }
-      
       // Try to get attempt A ID from session or attemptA
-      let attemptAId = session.attemptAId;
+      let attemptAId = session?.attemptAId;
       if (!attemptAId && attemptA) {
         attemptAId = attemptA.id;
       }
       
-      // If still no attemptAId, try to get latest completed attempt
-      if (!attemptAId) {
+      // If still no attemptAId, try to get latest completed attempt (if userId available)
+      if (!attemptAId && userId) {
         try {
           const latestAttemptId = await getLatestCompletedAttempt(userId);
           if (latestAttemptId) {
@@ -736,7 +1591,12 @@ export default function CompareResultPage() {
       setIsCreatingInvite(true);
       try {
         const result = await createCompareInvite(attemptAId, 10080);
-        navigate(`/compare/invite/${result.invite_token}`);
+        setInviteData({
+          token: result.invite_token,
+          url: `${window.location.origin}/compare/invite/${result.invite_token}`,
+          expiresAt: result.expires_at,
+        });
+        setInviteModalOpen(true);
       } catch (err) {
         if (import.meta.env.DEV) {
           console.error("[CompareResultPage] Error creating invite:", err);
@@ -805,45 +1665,193 @@ export default function CompareResultPage() {
   }
 
   // STATE B: Both attempts exist - render full page
+  // Defensive: If missing data, show error state instead of blank
   if (!session || !attemptA || !attemptB || !comparison) {
-    return null;
+    // #region agent log - Safety: Log state branch
+    console.log("[CompareResultPage] 📊 State branch: STATE_B_ERROR_MISSING_DATA", {
+      hasSession: !!session,
+      hasAttemptA: !!attemptA,
+      hasAttemptB: !!attemptB,
+      hasComparison: !!comparison,
+    });
+    // #endregion
+    if (import.meta.env.DEV) {
+      console.warn("[CompareResultPage] ⚠️ Missing data for full render:", {
+        hasSession: !!session,
+        hasAttemptA: !!attemptA,
+        hasAttemptB: !!attemptB,
+        hasComparison: !!comparison,
+        sessionStatus: session?.status,
+        attemptAId: attemptA?.id?.substring(0, 8) + "..." || "null",
+        attemptBId: attemptB?.id?.substring(0, 8) + "..." || "null",
+      });
+    }
+    // Show error state instead of blank
+    return (
+      <div className="min-h-screen p-4 py-8 bg-gradient-to-b from-background to-background/50">
+        <div className="max-w-4xl mx-auto space-y-8">
+          {devDebugPanel}
+          <div className="min-h-screen flex items-center justify-center p-4">
+            <div className="text-center space-y-4 max-w-md">
+              <h1 className="text-xl text-foreground font-medium">مشکل در بارگذاری</h1>
+              <p className="text-sm text-foreground/70 leading-relaxed">
+                یه مشکلی پیش اومده و این مقایسه الان در دسترس نیست.
+                <br />
+                اگه دوباره امتحانش کنی یا لینک جدید بسازی، درست می‌شه.
+              </p>
+              {import.meta.env.DEV && (
+                <div className="text-xs text-foreground/60 font-mono p-4 bg-black/20 rounded-lg text-left space-y-2 mt-4">
+                  <div><strong>Missing:</strong></div>
+                  <div>Session: {session ? "✓" : "✗"}</div>
+                  <div>Attempt A: {attemptA ? "✓" : "✗"}</div>
+                  <div>Attempt B: {attemptB ? "✓" : "✗"}</div>
+                  <div>Comparison: {comparison ? "✓" : "✗"}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
-  const nameA = attemptA.user_first_name || "شما";
-  const nameB = attemptB.user_first_name || "نفر مقابل";
+  // Compute display names: first_name + last_name if exists
+  // Only apply fallback if name is truly empty (null, undefined, or empty string after trim)
+  // Check for real names vs fallback text to avoid double fallback
+  const buildDisplayName = (firstName: string | null, lastName: string | null, fallback: string): string => {
+    // Check if firstName is null, undefined, empty string, or fallback text
+    if (!firstName || (typeof firstName === "string" && firstName.trim() === "") || firstName === "نفر اول" || firstName === "نفر دوم") {
+      if (import.meta.env.DEV) {
+        console.log("[CompareResultPage] 🔍 buildDisplayName: Using fallback", {
+          firstName,
+          lastName,
+          fallback,
+          firstNameType: typeof firstName,
+          firstNameIsNull: firstName === null,
+          firstNameIsUndefined: firstName === undefined,
+          firstNameIsEmpty: firstName === "",
+        });
+      }
+      return fallback;
+    }
+    const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+    const result = fullName || fallback;
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 🔍 buildDisplayName: Built name", {
+        firstName,
+        lastName,
+        fullName,
+        result,
+        fallback,
+      });
+    }
+    return result;
+  };
+  
+  const nameA = buildDisplayName(attemptA.user_first_name, attemptA.user_last_name, "نفر اول");
+  const nameB = buildDisplayName(attemptB.user_first_name, attemptB.user_last_name, "نفر دوم");
+  
+  if (import.meta.env.DEV) {
+    console.log("[CompareResultPage] 🔍 Computed display names (FINAL):", {
+      token: token ? token.substring(0, 12) + "..." : "N/A",
+      attempt_a_id: attemptA.id,
+      attempt_b_id: attemptB.id,
+      nameA,
+      nameB,
+      attemptA_user_first_name: attemptA.user_first_name,
+      attemptA_user_first_name_type: typeof attemptA.user_first_name,
+      attemptA_user_first_name_is_null: attemptA.user_first_name === null,
+      attemptA_user_first_name_is_empty: attemptA.user_first_name === "",
+      attemptA_user_last_name: attemptA.user_last_name,
+      attemptB_user_first_name: attemptB.user_first_name,
+      attemptB_user_first_name_type: typeof attemptB.user_first_name,
+      attemptB_user_first_name_is_null: attemptB.user_first_name === null,
+      attemptB_user_first_name_is_empty: attemptB.user_first_name === "",
+      attemptB_user_last_name: attemptB.user_last_name,
+      final_display_names: {
+        nameA,
+        nameB,
+        nameA_is_fallback: nameA === "نفر اول",
+        nameB_is_fallback: nameB === "نفر دوم",
+      },
+    });
+  }
 
-  // Compute similarity from dimension deltas
+  // Compute similarity from dimension deltas - only valid dimensions (null-safe)
   const dimensionDeltas: Record<DimensionKey, number> = {
-    stickiness: comparison.dimensions.stickiness.delta,
-    pastBrooding: comparison.dimensions.pastBrooding.delta,
-    futureWorry: comparison.dimensions.futureWorry.delta,
-    interpersonal: comparison.dimensions.interpersonal.delta,
+    stickiness: comparison?.dimensions?.stickiness?.delta ?? 0,
+    pastBrooding: comparison?.dimensions?.pastBrooding?.delta ?? 0,
+    futureWorry: comparison?.dimensions?.futureWorry?.delta ?? 0,
+    interpersonal: comparison?.dimensions?.interpersonal?.delta ?? 0,
   };
   const overallSimilarity = computeSimilarity(dimensionDeltas);
 
-  // Get largest difference dimension for central interpretation (with fallback)
+  // Get largest difference dimension for central interpretation - only valid dimensions (null-safe)
+  // Note: dimensionKeys is already declared at component level (line 423)
   const largestDiff = getLargestDifferenceDimension({
     stickiness: {
-      ...comparison.dimensions.stickiness,
-      aLevel: comparison.dimensions.stickiness.aLevel,
-      bLevel: comparison.dimensions.stickiness.bLevel,
+      ...(comparison?.dimensions?.stickiness || { delta: 0, relation: "similar" as const, direction: "equal" as const, aScore: 0, bScore: 0, aLevel: "low" as const, bLevel: "low" as const }),
     },
     pastBrooding: {
-      ...comparison.dimensions.pastBrooding,
-      aLevel: comparison.dimensions.pastBrooding.aLevel,
-      bLevel: comparison.dimensions.pastBrooding.bLevel,
+      ...(comparison?.dimensions?.pastBrooding || { delta: 0, relation: "similar" as const, direction: "equal" as const, aScore: 0, bScore: 0, aLevel: "low" as const, bLevel: "low" as const }),
     },
     futureWorry: {
-      ...comparison.dimensions.futureWorry,
-      aLevel: comparison.dimensions.futureWorry.aLevel,
-      bLevel: comparison.dimensions.futureWorry.bLevel,
+      ...(comparison?.dimensions?.futureWorry || { delta: 0, relation: "similar" as const, direction: "equal" as const, aScore: 0, bScore: 0, aLevel: "low" as const, bLevel: "low" as const }),
     },
     interpersonal: {
-      ...comparison.dimensions.interpersonal,
-      aLevel: comparison.dimensions.interpersonal.aLevel,
-      bLevel: comparison.dimensions.interpersonal.bLevel,
+      ...(comparison?.dimensions?.interpersonal || { delta: 0, relation: "similar" as const, direction: "equal" as const, aScore: 0, bScore: 0, aLevel: "low" as const, bLevel: "low" as const }),
     },
   });
+
+  // Get similarities and differences - filter out unknown dimensions (null-safe)
+  const validDimensionsForComparison = dimensionKeys.filter(key => {
+    const dim = comparison?.dimensions?.[key];
+    return dim && !isNaN(dim.delta ?? NaN) && !isNaN(dim.aScore ?? NaN) && !isNaN(dim.bScore ?? NaN);
+  });
+
+  const dimensionsForComparison: Record<DimensionKey, { relation: "similar" | "different" | "very_different"; delta: number }> = {} as any;
+  for (const key of validDimensionsForComparison) {
+    const dim = comparison?.dimensions?.[key];
+    if (dim) {
+      dimensionsForComparison[key] = {
+        relation: dim.relation,
+        delta: dim.delta,
+      };
+    }
+  }
+
+  const { similarities, differences } = getSimilaritiesAndDifferences(dimensionsForComparison);
+  
+  // Calculate misunderstanding risk - only from valid dimensions
+  // Build validDimensionsForRisk BEFORE using it (null-safe)
+  const validDimensionsForRisk: Record<DimensionKey, { relation: "similar" | "different" | "very_different" }> = {} as any;
+  for (const key of validDimensionsForComparison) {
+    const dim = comparison?.dimensions?.[key];
+    if (dim) {
+      validDimensionsForRisk[key] = {
+        relation: dim.relation,
+      };
+    }
+  }
+
+  // Calculate misunderstanding risk - only from valid dimensions
+  const misunderstandingRisk = getMisunderstandingRisk(validDimensionsForRisk);
+
+  // Get top dimensions for each person (may be null if all dimensions are unknown)
+  const topDimensionA = getTopDimensionForPerson(attemptA.dimension_scores);
+  const topDimensionB = getTopDimensionForPerson(attemptB.dimension_scores);
+
+  if (import.meta.env.DEV) {
+    console.log("[CompareResultPage] Top dimensions:", {
+      topDimensionA,
+      topDimensionB,
+      attemptA_scores: attemptA.dimension_scores,
+      attemptB_scores: attemptB.dimension_scores,
+      // Verify topDimensionA matches highest score in attemptA.dimension_scores
+      topDimensionA_score: topDimensionA ? attemptA.dimension_scores[topDimensionA] : null,
+      topDimensionB_score: topDimensionB ? attemptB.dimension_scores[topDimensionB] : null,
+    });
+  }
   
   // Check if CTA should be shown
   const showCTA = shouldShowCTA({
@@ -864,9 +1872,6 @@ export default function CompareResultPage() {
       bLevel: comparison.dimensions.interpersonal.bLevel,
     },
   });
-  
-  // All dimensions for the mental map
-  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
 
   // Share handlers
   const handleCopyLink = async () => {
@@ -967,6 +1972,17 @@ export default function CompareResultPage() {
   // Course URL
   const COURSE_URL = "https://afran.academy/course/ذهن-وراج";
 
+  // #region agent log - Safety: Log state branch
+  console.log("[CompareResultPage] 📊 State branch: STATE_B_COMPLETED", {
+    hasSession: !!session,
+    hasAttemptA: !!attemptA,
+    hasAttemptB: !!attemptB,
+    hasComparison: !!comparison,
+    nameA,
+    nameB,
+  });
+  // #endregion
+
   return (
     <div className="min-h-screen p-4 py-8 bg-gradient-to-b from-background to-background/50">
       <div className="max-w-4xl mx-auto space-y-8">
@@ -981,7 +1997,7 @@ export default function CompareResultPage() {
           </Card>
         )}
 
-        {/* SECTION 1: HEADER (Identity & Safety) */}
+        {/* SECTION 1: HEADER (Identity) */}
         <div className="text-center space-y-3">
           <h1 className="text-3xl sm:text-4xl text-foreground font-medium">
             ذهن ما کنار هم
@@ -994,34 +2010,118 @@ export default function CompareResultPage() {
             <span className="text-foreground/50">×</span>
             <span>{nameB}</span>
           </div>
+          <p className="text-xs text-foreground/60 mt-2">
+            ترجمه‌ی تفاوت‌های ذهنی به زبان رابطه
+          </p>
           </div>
 
         {/* SECTION 2: SNAPSHOT (3-Second Understanding) */}
         <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
           <CardContent className="pt-6 space-y-4">
-            {/* Overall Similarity Chip */}
-            <div className="text-center">
+            {/* Chips */}
+            <div className="flex flex-wrap justify-center gap-3">
               <span className="inline-block px-4 py-2 rounded-full bg-primary/20 border border-primary/30 text-sm font-medium text-foreground">
                 شباهت کلی: {SIMILARITY_LABELS[overallSimilarity]}
               </span>
+              <span className="inline-block px-4 py-2 rounded-full bg-orange-500/20 border border-orange-500/30 text-sm font-medium text-foreground">
+                ریسک سوءتفاهم: {misunderstandingRisk === "low" ? "کم" : misunderstandingRisk === "medium" ? "متوسط" : "زیاد"}
+              </span>
           </div>
 
-            {/* One Complementary Sentence */}
-            {largestDiff && (
-              <p className="text-center text-base text-foreground/90 leading-relaxed">
-                بزرگ‌ترین تفاوت ذهنی شما در {getDimensionNameForSnapshot(largestDiff.key)} است.
-              </p>
-            )}
+            {/* Risk explanation text */}
+            <p className="text-center text-sm text-foreground/80 leading-relaxed">
+              {getMisunderstandingRiskText(misunderstandingRisk)}
+            </p>
+
+            {/* Central sentence */}
+            {(() => {
+              const maxDelta = largestDiff?.delta || 0;
+              if (maxDelta < 0.8) {
+                // All aligned - show similarity message
+                const largestSimilar = getLargestSimilarityDimension({
+                  stickiness: { delta: comparison?.dimensions?.stickiness?.delta ?? 0, relation: comparison?.dimensions?.stickiness?.relation ?? "similar" },
+                  pastBrooding: { delta: comparison?.dimensions?.pastBrooding?.delta ?? 0, relation: comparison?.dimensions?.pastBrooding?.relation ?? "similar" },
+                  futureWorry: { delta: comparison?.dimensions?.futureWorry?.delta ?? 0, relation: comparison?.dimensions?.futureWorry?.relation ?? "similar" },
+                  interpersonal: { delta: comparison?.dimensions?.interpersonal?.delta ?? 0, relation: comparison?.dimensions?.interpersonal?.relation ?? "similar" },
+                });
+                
+                if (largestSimilar) {
+                  return (
+                    <p className="text-center text-base text-foreground/90 leading-relaxed font-medium">
+                      بزرگ‌ترین همسویی ذهنی شما در: {getDimensionNameForSnapshot(largestSimilar)}
+                    </p>
+                  );
+                } else {
+                  return (
+                    <p className="text-center text-base text-foreground/90 leading-relaxed font-medium">
+                      در این مقایسه، تفاوت برجسته‌ای دیده نمی‌شود؛ بیشتر همسویی مشاهده می‌شود.
+                    </p>
+                  );
+                }
+              } else if (largestDiff) {
+                return (
+                  <p className="text-center text-base text-foreground/90 leading-relaxed font-medium">
+                    بزرگ‌ترین تفاوت ذهنی شما در: {getDimensionNameForSnapshot(largestDiff.key)}
+                  </p>
+                );
+              }
+              return null;
+            })()}
+
+            {/* Complementary sentence */}
+            <p className="text-center text-sm text-foreground/80 leading-relaxed">
+              {getSimilarityComplementarySentence(overallSimilarity)}
+            </p>
           </CardContent>
         </Card>
 
-        {/* SECTION 3: 4-DIMENSION MENTAL MAP */}
+        {/* SECTION 3: MIND PROFILES FOR EACH PERSON */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {topDimensionA && (
+            <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
+              <CardHeader>
+                <CardTitle className="text-lg">سبک ذهنی {nameA}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-line">
+                  {generateMindSnapshot(nameA, topDimensionA, attemptA.dimension_scores)}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+          {topDimensionB && (
+            <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
+              <CardHeader>
+                <CardTitle className="text-lg">سبک ذهنی {nameB}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-line">
+                  {generateMindSnapshot(nameB, topDimensionB, attemptB.dimension_scores)}
+                </p>
+          </CardContent>
+        </Card>
+          )}
+        </div>
+
+        {/* SECTION 4: 4-DIMENSION MENTAL MAP */}
         <div className="space-y-4">
           <h2 className="text-xl text-foreground font-medium text-center mb-4">نقشه‌ی ذهنی</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {dimensionKeys.map((key) => {
-              const dim = comparison.dimensions[key];
-              const alignment = getAlignmentLabel(dim.delta);
+              const dim = comparison?.dimensions?.[key];
+              
+              // Defensive check: skip if dimension data is missing
+              if (!dim) {
+                if (import.meta.env.DEV) {
+                  console.warn(`[CompareResultPage] Missing dimension data for ${key}`);
+                }
+                return null;
+              }
+              
+              // Check if dimension is unknown (NaN) - null-safe
+              const isUnknown = !dim || isNaN(dim.delta ?? NaN) || isNaN(dim.aScore ?? NaN) || isNaN(dim.bScore ?? NaN);
+              
+              const alignment = isUnknown ? "نامشخص" : getAlignmentLabel(dim.delta ?? 0);
               
               return (
                 <Card key={key} className="bg-white/10 backdrop-blur-2xl border-white/20">
@@ -1048,12 +2148,26 @@ export default function CompareResultPage() {
                     <div className="pt-3 border-t border-white/10 grid grid-cols-2 gap-3 text-sm">
                       <div>
                         <span className="text-foreground/60">{nameA}:</span>{" "}
-                        <span className="text-foreground/90">{LEVEL_LABELS[dim.aLevel]}</span>
+                         <span className="text-foreground/90">
+                           {isUnknown ? "نامشخص" : (LEVEL_LABELS[dim.aLevel] || "نامشخص")}
+                         </span>
                 </div>
                       <div>
                         <span className="text-foreground/60">{nameB}:</span>{" "}
-                        <span className="text-foreground/90">{LEVEL_LABELS[dim.bLevel]}</span>
+                         <span className="text-foreground/90">
+                           {isUnknown ? "نامشخص" : (LEVEL_LABELS[dim.bLevel] || "نامشخص")}
+                         </span>
             </div>
+                    </div>
+
+                    {/* Dimension summary */}
+                    <div className="pt-3 border-t border-white/10">
+                      <p className="text-xs text-foreground/80 leading-relaxed">
+                        {isUnknown 
+                          ? "این بُعد قابل محاسبه نیست (داده ناقص است)."
+                          : generateDimensionSummary(dim.relation, dim.aLevel, dim.bLevel)
+                        }
+                      </p>
                     </div>
                   </CardContent>
                 </Card>
@@ -1062,8 +2176,91 @@ export default function CompareResultPage() {
           </div>
         </div>
 
-        {/* SECTION 4: CENTRAL HUMAN INTERPRETATION */}
-        {largestDiff ? (
+        {/* SECTION 5: SIMILARITIES AND DIFFERENCES */}
+        <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
+          <CardHeader>
+            <CardTitle className="text-center text-xl">شباهت‌ها و تفاوت‌های کلیدی</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Similarities */}
+            <div>
+              <h3 className="text-base font-medium text-foreground mb-3">شباهت‌ها</h3>
+              {similarities.length > 0 ? (
+                <ul className="space-y-2">
+                  {similarities.map((key) => (
+                    <li key={key} className="flex items-start gap-2 text-sm text-foreground/80">
+                      <span className="text-green-400 shrink-0 mt-1">•</span>
+                      <span>{DIMENSION_LABELS[key]}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-foreground/70 italic">
+                  همسویی کامل کمتر دیده می‌شود؛ این نشانه‌ی تفاوت سبک‌هاست، نه مشکل.
+                </p>
+              )}
+            </div>
+
+            {/* Differences */}
+            <div>
+              <h3 className="text-base font-medium text-foreground mb-3">تفاوت‌ها</h3>
+              {differences.length > 0 ? (
+                <ul className="space-y-2">
+                  {differences.map((key) => (
+                    <li key={key} className="flex items-start gap-2 text-sm text-foreground/80">
+                      <span className="text-orange-400 shrink-0 mt-1">•</span>
+                      <span>{DIMENSION_LABELS[key]} {comparison?.dimensions?.[key]?.relation === "very_different" && "(خیلی متفاوت)"}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-foreground/70 italic">
+                  در این نتایج، تفاوت چشمگیری بین شما دیده نشد. این یعنی در چند الگوی کلیدی، واکنش ذهنی‌تان شبیه‌تر است.
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* SECTION 6: CENTRAL HUMAN INTERPRETATION */}
+        {(() => {
+          const maxDelta = largestDiff?.delta || 0;
+          if (maxDelta < 0.8) {
+            // All aligned - use largest similarity dimension
+            const largestSimilar = getLargestSimilarityDimension({
+              stickiness: { delta: comparison?.dimensions?.stickiness?.delta ?? 0, relation: comparison?.dimensions?.stickiness?.relation ?? "similar" },
+              pastBrooding: { delta: comparison?.dimensions?.pastBrooding?.delta ?? 0, relation: comparison?.dimensions?.pastBrooding?.relation ?? "similar" },
+              futureWorry: { delta: comparison?.dimensions?.futureWorry?.delta ?? 0, relation: comparison?.dimensions?.futureWorry?.relation ?? "similar" },
+              interpersonal: { delta: comparison?.dimensions?.interpersonal?.delta ?? 0, relation: comparison?.dimensions?.interpersonal?.relation ?? "similar" },
+            });
+            
+            if (largestSimilar) {
+              const dim = comparison?.dimensions?.[largestSimilar];
+              return (
+                <Card className="bg-primary/10 backdrop-blur-2xl border-primary/20 shadow-xl">
+                  <CardContent className="pt-6">
+                    <div className="prose prose-invert max-w-none">
+                      <p className="text-base text-foreground/90 leading-relaxed whitespace-pre-line text-center">
+                        {generateCentralInterpretation(
+                          largestSimilar,
+                          nameA,
+                          nameB,
+                          dim.aLevel,
+                          dim.bLevel,
+                          dim.aScore,
+                          dim.bScore,
+                          dim.relation,
+                          dim.direction
+                        )}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            }
+          }
+          
+          return largestDiff ? (
           <Card className="bg-primary/10 backdrop-blur-2xl border-primary/20 shadow-xl">
             <CardContent className="pt-6">
               <div className="prose prose-invert max-w-none">
@@ -1075,7 +2272,9 @@ export default function CompareResultPage() {
                     largestDiff.aLevel,
                     largestDiff.bLevel,
                     largestDiff.aScore,
-                    largestDiff.bScore
+                      largestDiff.bScore,
+                      comparison?.dimensions?.[largestDiff.key]?.relation ?? "similar",
+                      comparison?.dimensions?.[largestDiff.key]?.direction ?? "equal"
                   )}
                   </p>
                 </div>
@@ -1091,65 +2290,232 @@ export default function CompareResultPage() {
             </div>
             </CardContent>
           </Card>
-        )}
+          );
+        })()}
 
-        {/* SECTION 5: RELATIONAL IMPACT */}
-        {largestDiff && (
+        {/* SECTION 7: MISUNDERSTANDING LOOP */}
+        {(() => {
+          const maxDelta = largestDiff?.delta || 0;
+          const dimensionToUse = maxDelta < 0.8 
+            ? getLargestSimilarityDimension({
+                stickiness: { delta: comparison?.dimensions?.stickiness?.delta ?? 0, relation: comparison?.dimensions?.stickiness?.relation ?? "similar" },
+                pastBrooding: { delta: comparison?.dimensions?.pastBrooding?.delta ?? 0, relation: comparison?.dimensions?.pastBrooding?.relation ?? "similar" },
+                futureWorry: { delta: comparison?.dimensions?.futureWorry?.delta ?? 0, relation: comparison?.dimensions?.futureWorry?.relation ?? "similar" },
+                interpersonal: { delta: comparison?.dimensions?.interpersonal?.delta ?? 0, relation: comparison?.dimensions?.interpersonal?.relation ?? "similar" },
+              })
+            : largestDiff?.key;
+          
+          if (!dimensionToUse) return null;
+          
+          const relation = maxDelta < 0.8 ? "similar" : (comparison?.dimensions?.[dimensionToUse]?.relation ?? "similar");
+          const title = relation === "similar" 
+            ? "وقتی این همسویی فعال می‌شود، معمولاً این چرخه شکل می‌گیرد:"
+            : "وقتی این تفاوت فعال می‌شود، معمولاً این چرخه شکل می‌گیرد:";
+          
+          return (
           <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
             <CardHeader>
-              <CardTitle className="text-center text-xl">این تفاوت‌ها معمولاً اینجا فعال می‌شوند</CardTitle>
+                <CardTitle className="text-center text-xl">{title}</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Contextual Triggers */}
-              <div>
+              <CardContent className="space-y-4">
+                {generateMisunderstandingLoop(dimensionToUse, relation).map((step, index) => (
+                <div key={index} className="flex items-start gap-3">
+                  <span className="text-primary/80 shrink-0 mt-1 font-medium">{index + 1}.</span>
+                  <p className="text-sm text-foreground/90 leading-relaxed flex-1">{step}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+          );
+        })()}
+
+        {/* SECTION 8: TRIGGER SITUATIONS */}
+        {(() => {
+          const maxDelta = largestDiff?.delta || 0;
+          const dimensionToUse = maxDelta < 0.8 
+            ? getLargestSimilarityDimension({
+                stickiness: { delta: comparison?.dimensions?.stickiness?.delta ?? 0, relation: comparison?.dimensions?.stickiness?.relation ?? "similar" },
+                pastBrooding: { delta: comparison?.dimensions?.pastBrooding?.delta ?? 0, relation: comparison?.dimensions?.pastBrooding?.relation ?? "similar" },
+                futureWorry: { delta: comparison?.dimensions?.futureWorry?.delta ?? 0, relation: comparison?.dimensions?.futureWorry?.relation ?? "similar" },
+                interpersonal: { delta: comparison?.dimensions?.interpersonal?.delta ?? 0, relation: comparison?.dimensions?.interpersonal?.relation ?? "similar" },
+              })
+            : largestDiff?.key;
+          
+          if (!dimensionToUse) return null;
+          
+          return (
+            <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
+              <CardHeader>
+                <CardTitle className="text-center text-xl">موقعیت‌های فعال‌ساز</CardTitle>
+              </CardHeader>
+              <CardContent>
                 <ul className="space-y-2">
-                  {getContextualTriggers(largestDiff.key).map((trigger, index) => (
+                  {getCombinedContextualTriggers(dimensionToUse, topDimensionB).map((trigger, index) => (
                     <li key={index} className="flex items-start gap-2 text-sm text-foreground/80">
                       <span className="text-primary/80 shrink-0 mt-1">•</span>
                       <span>{trigger}</span>
                 </li>
-              ))}
+                  ))}
             </ul>
-          </div>
+              </CardContent>
+            </Card>
+          );
+        })()}
 
-              {/* Two-Column Meaning Block */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-white/10">
+        {/* SECTION 9: SEEN/UNSEEN CONSEQUENCES */}
+        {(() => {
+          const maxDelta = largestDiff?.delta || 0;
+          const dimensionToUse = maxDelta < 0.8 
+            ? getLargestSimilarityDimension({
+                stickiness: { delta: comparison?.dimensions?.stickiness?.delta ?? 0, relation: comparison?.dimensions?.stickiness?.relation ?? "similar" },
+                pastBrooding: { delta: comparison?.dimensions?.pastBrooding?.delta ?? 0, relation: comparison?.dimensions?.pastBrooding?.relation ?? "similar" },
+                futureWorry: { delta: comparison?.dimensions?.futureWorry?.delta ?? 0, relation: comparison?.dimensions?.futureWorry?.relation ?? "similar" },
+                interpersonal: { delta: comparison?.dimensions?.interpersonal?.delta ?? 0, relation: comparison?.dimensions?.interpersonal?.relation ?? "similar" },
+              })
+            : largestDiff?.key;
+          
+          if (!dimensionToUse) return null;
+          
+          return (
+            <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
+            <CardHeader>
+              <CardTitle className="text-center text-xl">پیامد دیده نشدن / دیده شدن</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {(() => {
+                const consequences = getSeenUnseenConsequences(dimensionToUse);
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
                   <h4 className="text-sm font-medium text-red-300 mb-2">اگر دیده نشود</h4>
                   <ul className="space-y-1 text-xs text-foreground/80">
-                    <li>• سوءبرداشت</li>
-                    <li>• دلخوری</li>
-                    <li>• فاصله‌ی ذهنی</li>
+                        {consequences.unseen.map((item, idx) => (
+                          <li key={idx}>• {item}</li>
+                        ))}
                   </ul>
                 </div>
                 <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-lg">
                   <h4 className="text-sm font-medium text-green-300 mb-2">اگر دیده شود</h4>
                   <ul className="space-y-1 text-xs text-foreground/80">
-                    <li>• درک متقابل</li>
-                    <li>• گفت‌وگوی شفاف‌تر</li>
-                    <li>• تنظیم بهتر رابطه</li>
+                        {consequences.seen.map((item, idx) => (
+                          <li key={idx}>• {item}</li>
+                        ))}
                   </ul>
                 </div>
               </div>
+                );
+              })()}
             </CardContent>
           </Card>
-        )}
+          );
+        })()}
 
-        {/* SECTION 6: CONVERSATION STARTERS */}
+        {/* SECTION 10: EMOTIONAL EXPERIENCE */}
+        {(() => {
+          const maxDelta = largestDiff?.delta || 0;
+          const dimensionToUse = maxDelta < 0.8 
+            ? getLargestSimilarityDimension({
+                stickiness: { delta: comparison?.dimensions?.stickiness?.delta ?? 0, relation: comparison?.dimensions?.stickiness?.relation ?? "similar" },
+                pastBrooding: { delta: comparison?.dimensions?.pastBrooding?.delta ?? 0, relation: comparison?.dimensions?.pastBrooding?.relation ?? "similar" },
+                futureWorry: { delta: comparison?.dimensions?.futureWorry?.delta ?? 0, relation: comparison?.dimensions?.futureWorry?.relation ?? "similar" },
+                interpersonal: { delta: comparison?.dimensions?.interpersonal?.delta ?? 0, relation: comparison?.dimensions?.interpersonal?.relation ?? "similar" },
+              })
+            : largestDiff?.key;
+          
+          if (!dimensionToUse) return null;
+          
+          const relation = maxDelta < 0.8 ? "similar" : (comparison?.dimensions?.[dimensionToUse]?.relation ?? "similar");
+          const dim = comparison?.dimensions?.[dimensionToUse];
+          
+          const emotionalExp = generateEmotionalExperience(
+            dimensionToUse,
+            nameA,
+            nameB,
+            dim.aLevel,
+            dim.bLevel,
+            relation
+          );
+          
+          const title = relation === "similar"
+            ? "این همسویی ممکن است این‌طور حس شود"
+            : "این تفاوت ممکن است این‌طور حس شود";
+          
+          return (
+            <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
+              <CardHeader>
+                <CardTitle className="text-center text-xl">{title}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {emotionalExp.shared ? (
+                  <div className="p-4 bg-white/5 border border-white/10 rounded-lg">
+                    <p className="text-sm text-foreground/90">{emotionalExp.shared}</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="p-4 bg-white/5 border border-white/10 rounded-lg">
+                      <p className="text-sm text-foreground/90">
+                        <span className="font-medium">{nameA}:</span> {emotionalExp.forA}
+                      </p>
+                    </div>
+                    <div className="p-4 bg-white/5 border border-white/10 rounded-lg">
+                      <p className="text-sm text-foreground/90">
+                        <span className="font-medium">{nameB}:</span> {emotionalExp.forB}
+                      </p>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })()}
+
+        {/* SECTION 11: CONVERSATION STARTERS */}
+        {(() => {
+          const maxDelta = largestDiff?.delta || 0;
+          const dimensionToUse = maxDelta < 0.8 
+            ? getLargestSimilarityDimension({
+                stickiness: { delta: comparison?.dimensions?.stickiness?.delta ?? 0, relation: comparison?.dimensions?.stickiness?.relation ?? "similar" },
+                pastBrooding: { delta: comparison?.dimensions?.pastBrooding?.delta ?? 0, relation: comparison?.dimensions?.pastBrooding?.relation ?? "similar" },
+                futureWorry: { delta: comparison?.dimensions?.futureWorry?.delta ?? 0, relation: comparison?.dimensions?.futureWorry?.relation ?? "similar" },
+                interpersonal: { delta: comparison?.dimensions?.interpersonal?.delta ?? 0, relation: comparison?.dimensions?.interpersonal?.relation ?? "similar" },
+              })
+            : largestDiff?.key;
+          
+          if (!dimensionToUse) return null;
+          
+          const relation = maxDelta < 0.8 ? "similar" : (comparison?.dimensions?.[dimensionToUse]?.relation ?? "similar");
+          const questions = getConversationStarters(dimensionToUse, relation);
+          
+          return (
         <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
           <CardHeader>
-            <CardTitle className="text-center text-xl">برای شروع گفتگو</CardTitle>
+                <CardTitle className="text-center text-xl">شروع گفت‌وگو</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {CONVERSATION_STARTERS.map((starter, index) => (
-              <div key={index} className="p-3 bg-white/5 border border-white/10 rounded-lg">
-                <p className="text-sm text-foreground/90 leading-relaxed">{starter}</p>
+                {questions.map((q, idx) => (
+                  <div key={idx} className="p-3 bg-white/5 border border-white/10 rounded-lg">
+                    <p className="text-sm text-foreground/90 leading-relaxed">{q}</p>
               </div>
             ))}
           </CardContent>
         </Card>
+          );
+        })()}
 
-        {/* SECTION 7: SAFETY STATEMENT (Always Render, Distinct Box) */}
+        {/* SECTION 12: FINAL SUMMARY */}
+        <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
+          <CardContent className="pt-6">
+            <p className="text-sm text-foreground/90 leading-relaxed text-center whitespace-pre-line">
+              این صفحه قرار نیست چیزی را درست یا غلط کند.
+              {"\n"}
+              فقط نشان می‌دهد ذهن‌ها چطور متفاوت واکنش نشان می‌دهند.
+              {"\n"}
+              دیدن این تفاوت‌ها می‌تواند نقطه‌ی شروع فهم باشد، نه بحث.
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* SECTION 13: SAFETY & UNCERTAINTY (Always Render, Distinct Box) */}
         <Card className="bg-blue-500/10 backdrop-blur-2xl border-blue-500/20 shadow-xl">
           <CardContent className="pt-6">
             <p className="text-xs text-foreground/80 leading-relaxed text-center whitespace-pre-line">
@@ -1196,7 +2562,7 @@ export default function CompareResultPage() {
               variant="outline"
                 className="w-full rounded-xl min-h-[48px] bg-primary/20 border-primary/30 hover:bg-primary/30"
             >
-                دوره صوتی ذهن وراج
+                دیدن دوره
             </Button>
             </CardContent>
           </Card>
@@ -1211,85 +2577,171 @@ export default function CompareResultPage() {
         )}
 
 
-        {/* Dev Panel */}
+        {/* Dev Panel - Enhanced diagnostics */}
         {import.meta.env.DEV && (
-          <div className="fixed bottom-4 left-4 bg-black/90 text-white text-xs p-4 rounded-lg font-mono max-w-md z-50 border border-white/20 max-h-96 overflow-auto">
-            <div className="font-bold mb-2 text-yellow-400">Compare Result Dev Panel</div>
+          <Card className="bg-black/90 border border-white/20 shadow-xl mt-6">
+            <CardHeader>
+              <CardTitle className="text-sm text-yellow-400 font-mono">Compare Result Dev Panel</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-xs font-mono">
+              <div className="space-y-1">
+                <div><span className="text-gray-400">Token:</span> {token ? token.substring(0, 12) + "..." : "N/A"}</div>
+                {session && (
+                  <>
+                    <div><span className="text-gray-400">Session Status:</span> {session.status}</div>
+                    <div><span className="text-gray-400">Session ID:</span> {session.id.substring(0, 8)}...</div>
+                    <div><span className="text-gray-400">Attempt A ID:</span> {session.attemptAId?.substring(0, 8) + "..." || "N/A"}</div>
+                    <div><span className="text-gray-400">Attempt B ID:</span> {session.attemptBId?.substring(0, 8) + "..." || "N/A"}</div>
+                    {session.expiresAt && (
+                      <div><span className="text-gray-400">Expires:</span> {new Date(session.expiresAt).toISOString()}</div>
+                    )}
+                  </>
+                )}
+              </div>
+              {attemptA && (
             <div className="space-y-2">
-              <div>
-                <span className="text-gray-400">Token:</span>{" "}
-                {token ? token.substring(0, 12) + "..." : "N/A"}
+                  <div className="text-yellow-400 font-bold">Attempt A:</div>
+                  <div className="text-foreground/80 pl-4 space-y-1">
+                    <div><span className="text-gray-400">ID:</span> {attemptA.id.substring(0, 8)}...</div>
+                    <div><span className="text-gray-400">Name:</span> {attemptA.user_first_name ?? "null"} {attemptA.user_last_name || ""}</div>
+                    <div><span className="text-gray-400">Total Score:</span> {attemptA.total_score ?? "null"}</div>
+                    <div><span className="text-gray-400">Dimension Scores:</span> {attemptA.dimension_scores ? JSON.stringify(attemptA.dimension_scores) : "null"}</div>
+                    <div><span className="text-gray-400">Dim Scores Present:</span> {attemptA.dimension_scores !== null && attemptA.dimension_scores !== undefined ? "YES" : "NO"}</div>
               </div>
-              <div>
-                <span className="text-gray-400">Session Status:</span> {session?.status || "N/A"}
               </div>
-              <div>
-                <span className="text-gray-400">Attempt A ID:</span>{" "}
-                {session?.attemptAId ? session.attemptAId.substring(0, 8) + "..." : "N/A"}
-              </div>
-              <div>
-                <span className="text-gray-400">Attempt B ID:</span>{" "}
-                {session?.attemptBId ? session.attemptBId.substring(0, 8) + "..." : "N/A"}
-              </div>
-              {session?.expiresAt && (
-                <>
-              <div>
-                    <span className="text-gray-400">Expires At:</span>{" "}
-                    {new Date(session.expiresAt).toISOString()}
-              </div>
-              <div>
-                    <span className="text-gray-400">Now:</span>{" "}
-                    {new Date().toISOString()}
-              </div>
-                  <div>
-                    <span className="text-gray-400">Is Valid:</span>{" "}
-                    <span className={(() => {
-                      const expiresAt = new Date(session.expiresAt);
-                      const now = new Date();
-                      return expiresAt > now ? "text-green-400" : "text-red-400";
-                    })()}>
-                      {(() => {
-                        const expiresAt = new Date(session.expiresAt);
-                        const now = new Date();
-                        return expiresAt > now ? "YES" : "NO (expired)";
-                      })()}
-                    </span>
-            </div>
-                </>
               )}
-              {!session?.expiresAt && (
-                <div>
-                  <span className="text-gray-400">Expires At:</span>{" "}
-                  <span className="text-green-400">NULL (no expiration)</span>
+              {attemptB && (
+                <div className="space-y-2">
+                  <div className="text-yellow-400 font-bold">Attempt B:</div>
+                  <div className="text-foreground/80 pl-4 space-y-1">
+                    <div><span className="text-gray-400">ID:</span> {attemptB.id.substring(0, 8)}...</div>
+                    <div><span className="text-gray-400">Name:</span> {attemptB.user_first_name ?? "null"} {attemptB.user_last_name || ""}</div>
+                    <div><span className="text-gray-400">Total Score:</span> {attemptB.total_score ?? "null"}</div>
+                    <div><span className="text-gray-400">Dimension Scores:</span> {attemptB.dimension_scores ? JSON.stringify(attemptB.dimension_scores) : "null"}</div>
+                    <div><span className="text-gray-400">Dim Scores Present:</span> {attemptB.dimension_scores !== null && attemptB.dimension_scores !== undefined ? "YES" : "NO"}</div>
+              </div>
+              </div>
+              )}
+              {comparison && (
+                <div className="space-y-2">
+                  <div className="text-yellow-400 font-bold">Comparison:</div>
+                  <div className="text-foreground/80 pl-4 space-y-1">
+                    <div><span className="text-gray-400">Similarity:</span> {comparison.summarySimilarity}</div>
+                    <div><span className="text-gray-400">Dimensions:</span></div>
+                    {dimensionKeys.map((key) => {
+                      const dim = comparison?.dimensions?.[key];
+                      const isUnknown = isNaN(dim.delta);
+                      return (
+                        <div key={key} className="pl-4 text-foreground/70">
+                          {key}: A={isUnknown ? "?" : dim.aScore.toFixed(1)}, B={isUnknown ? "?" : dim.bScore.toFixed(1)}, 
+                          Δ={isUnknown ? "?" : dim.delta.toFixed(1)}, {dim.relation}
+              </div>
+                      );
+                    })}
+              </div>
+            </div>
+              )}
+              {error && (
+                <div className="space-y-1">
+                  <div className="text-red-400 font-bold">Last Error:</div>
+                  <div className="text-red-300 pl-4">{error}</div>
           </div>
         )}
-              <div>
-                <span className="text-gray-400">A Total:</span> {attemptA?.total_score ?? "N/A"}
+            </CardContent>
+          </Card>
+        )}
               </div>
-              <div>
-                <span className="text-gray-400">B Total:</span> {attemptB?.total_score ?? "N/A"}
+
+      {/* Invite Modal */}
+      <AppModal
+        isOpen={inviteModalOpen}
+        title="لینک دعوت"
+        onClose={() => {
+          setInviteModalOpen(false);
+          setInviteData(null);
+        }}
+      >
+        <div className="space-y-4">
+          {inviteData ? (
+            <>
+              <div className="p-4 rounded-2xl bg-black/20 border border-white/15">
+                <p className="text-xs text-muted-foreground/70 mb-2">لینک دعوت:</p>
+                <input
+                  readOnly
+                  value={inviteData.url}
+                  className="w-full p-2 rounded-lg bg-black/20 border border-white/10 text-sm text-foreground font-mono break-all"
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                />
               </div>
-              <div>
-                <span className="text-gray-400">A Dims:</span>{" "}
-                {attemptA?.dimension_scores
-                  ? JSON.stringify(attemptA.dimension_scores)
-                  : "N/A"}
-              </div>
-              <div>
-                <span className="text-gray-400">B Dims:</span>{" "}
-                {attemptB?.dimension_scores
-                  ? JSON.stringify(attemptB.dimension_scores)
-                  : "N/A"}
-              </div>
-              {error && (
-                <div>
-                  <span className="text-red-400">Error:</span> {error}
-                </div>
+
+              {inviteData.expiresAt && (
+                <p className="text-xs text-foreground/70 text-center">
+                  این لینک {formatExpiresAt(inviteData.expiresAt)} معتبر است
+                </p>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button
+                  onClick={async () => {
+                    if (!inviteData) return;
+                    try {
+                      if (navigator.clipboard && navigator.clipboard.writeText) {
+                        await navigator.clipboard.writeText(inviteData.url);
+                        toast.success("لینک کپی شد");
+                      } else {
+                        const success = await copyText(inviteData.url);
+                        if (success) {
+                          toast.success("لینک کپی شد");
+                        } else {
+                          toast.error("خطا در کپی لینک");
+                        }
+                      }
+                    } catch (error) {
+                      if (import.meta.env.DEV) {
+                        console.error("[CompareResultPage] Error copying link:", error);
+                      }
+                      toast.error("خطا در کپی لینک");
+                    }
+                  }}
+                  variant="outline"
+                  className="flex-1 rounded-xl min-h-[44px] bg-white/10 border-white/20"
+                >
+                  <Copy className="w-4 h-4 ml-2" />
+                  کپی لینک
+                </Button>
+                {navigator.share && (
+                  <Button
+                    onClick={async () => {
+                      if (!inviteData) return;
+                      try {
+                        await navigator.share({
+                          title: "دعوت به مقایسه‌ی ذهن‌ها",
+                          text: "یک نفر دوست داشته الگوی ذهنی شما و خودش رو کنار هم ببینه.",
+                          url: inviteData.url,
+                        });
+                      } catch (error: any) {
+                        if (error.name !== "AbortError") {
+                          if (import.meta.env.DEV) {
+                            console.error("[CompareResultPage] Error sharing:", error);
+                          }
+                        }
+                      }
+                    }}
+                    className="flex-1 rounded-xl min-h-[44px] bg-primary/80 hover:bg-primary border-primary/40"
+                  >
+                    <Share2 className="w-4 h-4 ml-2" />
+                    اشتراک‌گذاری
+                  </Button>
               )}
             </div>
+            </>
+          ) : (
+            <div className="p-4 rounded-2xl bg-white/10 border border-white/20 text-center">
+              <p className="text-sm text-foreground/80">در حال ساخت لینک...</p>
           </div>
         )}
       </div>
+      </AppModal>
     </div>
   );
 }

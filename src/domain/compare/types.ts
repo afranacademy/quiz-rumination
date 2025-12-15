@@ -12,7 +12,8 @@ export type Comparison = {
       aScore: number;
       bScore: number;
       delta: number; // abs(aScore - bScore), rounded to 1 decimal
-      relation: "similar" | "different";
+      relation: "similar" | "different" | "very_different";
+      direction: "a_higher" | "b_higher" | "equal"; // which person has higher score
       aLevel: "low" | "medium" | "high";
       bLevel: "low" | "medium" | "high";
     }

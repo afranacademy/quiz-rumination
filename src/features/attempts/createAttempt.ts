@@ -5,7 +5,7 @@ export type StartAttemptPayload = {
   participantId: string;
   userFirstName: string;
   userLastName: string | null;
-  userPhone: string;
+  userPhone: string | null;
   userAgent: string;
 };
 
@@ -35,12 +35,22 @@ export async function startAttempt(payload: StartAttemptPayload): Promise<string
   // Initialize answers array with 12 null values
   const initialAnswers: (number | null)[] = new Array(12).fill(null);
 
+  // user_last_name is nullable - use null if not provided (graceful fallback)
+  const userLastName = payload.userLastName && payload.userLastName.trim() !== '' 
+    ? payload.userLastName.trim() 
+    : null;
+  
+  // user_phone can be empty string (nullable in DB)
+  const userPhone = payload.userPhone && payload.userPhone.trim() !== ''
+    ? payload.userPhone.trim()
+    : null;
+  
   const insertPayload = {
     quiz_id: payload.quizId,
     participant_id: payload.participantId,
     user_first_name: payload.userFirstName,
-    user_last_name: payload.userLastName,
-    user_phone: payload.userPhone,
+    user_last_name: userLastName, // Nullable - null if not provided
+    user_phone: userPhone, // Nullable - null if not provided
     status: "started",
     started_at: new Date().toISOString(),
     answers: initialAnswers,
@@ -212,25 +222,54 @@ export async function completeAttempt(payload: CompleteAttemptPayload): Promise<
     throw new Error("Failed to ensure authentication session. Cannot complete attempt.");
   }
 
-  // First, check current status to prevent overwriting
+  // Get current user ID for ownership validation
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  const currentParticipantId = user?.id;
+
+  if (userError || !currentParticipantId) {
+    throw new Error(`Failed to get current user: ${userError?.message || "No user"}`);
+  }
+
+  // First, check current status and ownership to prevent overwriting
   const { data: currentAttempt, error: fetchError } = await supabase
     .from("attempts")
-    .select("id, status")
+    .select("id, status, participant_id, quiz_id")
     .eq("id", payload.attemptId)
-    .single();
+    .maybeSingle();
 
   if (fetchError) {
-    console.error("[completeAttempt] Error fetching attempt status:", {
-      message: fetchError.message,
-      details: fetchError.details,
-      hint: fetchError.hint,
-      code: fetchError.code,
-    });
+    if (import.meta.env.DEV) {
+      console.error("[completeAttempt] Error fetching attempt status:", {
+        message: fetchError.message,
+        details: fetchError.details,
+        hint: fetchError.hint,
+        code: fetchError.code,
+      });
+    }
     throw new Error(`Failed to fetch attempt status: ${fetchError.message}`);
   }
 
   if (!currentAttempt) {
-    throw new Error(`Attempt not found: ${payload.attemptId}`);
+    // Attempt not found - likely RLS blocked or doesn't exist
+    if (import.meta.env.DEV) {
+      console.error("[completeAttempt] Attempt not found or not accessible:", {
+        attemptId: payload.attemptId,
+        participantId: currentParticipantId,
+      });
+    }
+    throw new Error(`Attempt not found or not owned: ${payload.attemptId}. Please create a new attempt.`);
+  }
+
+  // Validate ownership
+  if (currentAttempt.participant_id !== currentParticipantId) {
+    if (import.meta.env.DEV) {
+      console.error("[completeAttempt] Ownership mismatch:", {
+        attemptId: payload.attemptId,
+        attemptParticipantId: currentAttempt.participant_id,
+        currentParticipantId,
+      });
+    }
+    throw new Error(`Attempt not owned by current participant: ${payload.attemptId}. Please create a new attempt.`);
   }
 
   // Prevent overwriting already completed or abandoned attempts
@@ -270,10 +309,12 @@ export async function completeAttempt(payload: CompleteAttemptPayload): Promise<
   }
 
   if (import.meta.env.DEV) {
-    console.log("[completeAttempt] Completing attempt:", payload.attemptId);
+    console.log("[completeAttempt] Completing attempt:", payload.attemptId.substring(0, 8) + "...");
     console.log("[completeAttempt] Pre-update validation:", {
       totalScore: payload.totalScore,
       dimensionScores: payload.dimensionScores,
+      dimensionScoresKeys: Object.keys(payload.dimensionScores),
+      dimensionScoresValues: Object.values(payload.dimensionScores),
       scoreBandId: payload.scoreBandId,
     });
   }
@@ -294,18 +335,37 @@ export async function completeAttempt(payload: CompleteAttemptPayload): Promise<
     status: "completed",
     completed_at: new Date().toISOString(),
   };
+  
+  if (import.meta.env.DEV) {
+    console.log("[completeAttempt] Update payload (dimension_scores):", {
+      dimension_scores: updatePayload.dimension_scores,
+      dimension_scoresType: typeof updatePayload.dimension_scores,
+      dimension_scoresIsObject: typeof updatePayload.dimension_scores === "object",
+    });
+  }
 
   // Update by id only - we already checked status is not completed/abandoned
   // Use .is("completed_at", null) to ensure we don't overwrite completed attempts
   // Use .select('*') to get all fields including dimension_scores
   // Use .maybeSingle() to handle 0 rows gracefully (idempotent)
+  // Also filter by participant_id to ensure ownership
   const { data, error } = await supabase
     .from("attempts")
     .update(updatePayload)
     .eq("id", payload.attemptId)
+    .eq("participant_id", currentParticipantId) // Ensure ownership
     .is("completed_at", null) // Only update if not already completed
     .select("*")
     .maybeSingle();
+
+  if (import.meta.env.DEV) {
+    console.log("[completeAttempt] Update result:", {
+      attemptId: payload.attemptId,
+      participantId: currentParticipantId,
+      rowsUpdated: data ? 1 : 0,
+      dataReturned: !!data,
+    });
+  }
 
   if (error) {
     // Log detailed Supabase error
@@ -325,13 +385,24 @@ export async function completeAttempt(payload: CompleteAttemptPayload): Promise<
       const retryHasSession = await ensureSession();
       if (retryHasSession) {
         // Retry the update once - use maybeSingle() to handle 0 rows
+        // Also filter by participant_id to ensure ownership
         const { data: retryData, error: retryError } = await supabase
           .from("attempts")
           .update(updatePayload)
           .eq("id", payload.attemptId)
+          .eq("participant_id", currentParticipantId) // Ensure ownership
           .is("completed_at", null)
           .select("*")
           .maybeSingle();
+
+        if (import.meta.env.DEV) {
+          console.log("[completeAttempt] Retry update result:", {
+            attemptId: payload.attemptId,
+            participantId: currentParticipantId,
+            rowsUpdated: retryData ? 1 : 0,
+            dataReturned: !!retryData,
+          });
+        }
 
         if (retryError) {
           console.error("[completeAttempt] Retry failed:", {
@@ -411,13 +482,14 @@ export async function completeAttempt(payload: CompleteAttemptPayload): Promise<
   }
 
   if (!data) {
-    // Update returned 0 rows (already completed) - fetch by id only (no status filter)
+    // Update returned 0 rows - fetch by id to check status and ownership
     // This is idempotent: treat as success if already completed
     const { data: checkData, error: checkError } = await supabase
       .from("attempts")
       .select("*")
       .eq("id", payload.attemptId)
-      .single();
+      .eq("participant_id", currentParticipantId)
+      .maybeSingle();
     
     if (checkError) {
       if (import.meta.env.DEV) {
@@ -428,10 +500,22 @@ export async function completeAttempt(payload: CompleteAttemptPayload): Promise<
           hint: checkError.hint,
         });
       }
-      throw new Error(`Failed to complete attempt: update returned no data and status check failed. Attempt ID: ${payload.attemptId}`);
+      // If RLS blocks or not found, likely ownership issue
+      throw new Error(`Failed to complete attempt: update returned no data and status check failed. Attempt ID: ${payload.attemptId}. This may indicate the attempt is not owned by the current participant.`);
     }
     
-    if (checkData?.status === "completed") {
+    if (!checkData) {
+      // Attempt not found or not owned
+      if (import.meta.env.DEV) {
+        console.error("[completeAttempt] Attempt not found or not owned after 0-row update:", {
+          attemptId: payload.attemptId,
+          participantId: currentParticipantId,
+        });
+      }
+      throw new Error(`Failed to complete attempt: 0 rows updated and attempt not found or not owned. Attempt ID: ${payload.attemptId}. Please create a new attempt.`);
+    }
+    
+    if (checkData.status === "completed") {
       if (import.meta.env.DEV) {
         console.log("[completeAttempt] Attempt already completed (idempotent call), returning existing data:", payload.attemptId);
       }
@@ -453,7 +537,15 @@ export async function completeAttempt(payload: CompleteAttemptPayload): Promise<
     }
     
     // 0 rows updated and status is not completed - throw clear error with current status
-    const currentStatus = checkData?.status || "unknown";
+    const currentStatus = checkData.status || "unknown";
+    if (import.meta.env.DEV) {
+      console.error("[completeAttempt] 0 rows updated, attempt not completed:", {
+        attemptId: payload.attemptId,
+        currentStatus,
+        participantId: currentParticipantId,
+        attemptParticipantId: checkData.participant_id,
+      });
+    }
     throw new Error(`Failed to complete attempt: 0 rows updated. Attempt ID: ${payload.attemptId}, Current status: ${currentStatus}`);
   }
 
@@ -505,7 +597,63 @@ export async function completeAttempt(payload: CompleteAttemptPayload): Promise<
   });
 }
 
-  return data;
+  // A) CRITICAL VERIFICATION: Re-fetch to verify dimension_scores was actually saved
+  const { data: verifyData, error: verifyError } = await supabase
+    .from("attempts")
+    .select("*")
+    .eq("id", payload.attemptId)
+    .single();
+
+  if (verifyError || !verifyData) {
+    const errorMsg = `Failed to verify attempt completion: ${verifyError?.message || "No data returned"}`;
+    if (import.meta.env.DEV) {
+      console.error("[completeAttempt] ❌ Verification failed:", {
+        attemptId: payload.attemptId,
+        error: verifyError,
+      });
+    }
+    throw new Error(errorMsg);
+  }
+
+  // Log verification data for debugging
+  if (import.meta.env.DEV) {
+    console.log("[completeAttempt] 🔍 Verification data:", {
+      attempt_id: verifyData.id,
+      dimension_scores: verifyData.dimension_scores,
+      dimension_scores_type: typeof verifyData.dimension_scores,
+      dimension_scores_is_object: typeof verifyData.dimension_scores === "object",
+      total_score: verifyData.total_score,
+      answers: verifyData.answers,
+      status: verifyData.status,
+    });
+  }
+
+  // Critical check: dimension_scores must exist and be an object
+  if (!verifyData.dimension_scores || typeof verifyData.dimension_scores !== "object") {
+    const errorMsg = `CRITICAL: dimension_scores not saved! Attempt ID: ${payload.attemptId}`;
+    if (import.meta.env.DEV) {
+      console.error(`[completeAttempt] ❌ ${errorMsg}`, {
+        attemptId: payload.attemptId,
+        payloadDimensionScores: payload.dimensionScores,
+        savedDimensionScores: verifyData.dimension_scores,
+        savedDimensionScoresType: typeof verifyData.dimension_scores,
+        verifyDataKeys: Object.keys(verifyData),
+      });
+      throw new Error(errorMsg);
+    } else {
+      console.warn(`[completeAttempt] ⚠️ ${errorMsg}`);
+    }
+  }
+
+  // Return verified data
+  return {
+    id: verifyData.id,
+    status: verifyData.status,
+    total_score: verifyData.total_score || 0,
+    score_band_id: verifyData.score_band_id,
+    dimension_scores: (verifyData.dimension_scores as Record<string, number>) || {},
+    completed_at: verifyData.completed_at || new Date().toISOString(),
+  };
 }
 
 /**

@@ -1,63 +1,255 @@
 import { useEffect, useState, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, useParams } from "react-router-dom";
 import { QuizPage as QuizPageComponent } from "@/app/components/QuizPage";
 import { scoreAfranR14 } from "@/features/quiz/scoring/scoreAfranR14";
 import { getLevel } from "@/features/quiz/scoring/levelsAfranR14";
 import { calculateBand } from "@/features/attempts/calculateBand";
-import { updateAttemptAnswers, completeAttempt, markAttemptAbandoned } from "@/features/attempts/createAttempt";
+import { updateAttemptAnswers, completeAttempt, markAttemptAbandoned, startAttempt } from "@/features/attempts/createAttempt";
 import { computeTotalScore, normalizeAnswers } from "@/domain/quiz/scoring";
 import { computeDimensionScores } from "@/domain/quiz/dimensions";
 import { useAnonAuth } from "@/hooks/useAnonAuth";
 import { completeSession } from "@/api/compare";
 import { completeCompareSession } from "@/features/compare/completeCompareSession";
 import { supabase } from "@/lib/supabaseClient";
+import { getAttemptStorageKey } from "@/features/attempts/getAttemptStorageKey";
+import { getQuizId } from "@/features/attempts/getQuizId";
+import { getCompareSession } from "@/features/compare/getCompareSession";
+import { InviteIdentityGate } from "@/features/compare/InviteIdentityGate";
 import type { LikertValue, LevelKey } from "@/features/quiz/types";
 
 export default function QuizPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const params = useParams();
   const inviteToken = searchParams.get("invite");
-  // Support multiple token patterns: /quiz?compare=... or /compare?token=... (from URL) or sessionStorage
-  const compareTokenFromUrl = searchParams.get("compare") || searchParams.get("token");
-  const compareTokenFromStorage = sessionStorage.getItem("afran_compare_token");
-  const compareToken = compareTokenFromUrl || compareTokenFromStorage;
   
-  // If token is in URL but not in sessionStorage, store it
-  if (compareTokenFromUrl && compareTokenFromUrl !== compareTokenFromStorage) {
-    sessionStorage.setItem("afran_compare_token", compareTokenFromUrl);
+  // Support multiple token patterns: /quiz?compare=... or /compare?token=... (from URL) or sessionStorage
+  // Also check route params: /compare/invite/:token, /compare/:token, /compare/result/:token
+  const compareTokenFromUrl = searchParams.get("compare") || searchParams.get("token");
+  const compareTokenFromRoute = params.token;
+  const compareTokenFromStorage = sessionStorage.getItem("afran_compare_token");
+  const compareToken = compareTokenFromUrl || compareTokenFromRoute || compareTokenFromStorage;
+  
+  // If token is in URL/route but not in sessionStorage, store it
+  const tokenToStore = compareTokenFromUrl || compareTokenFromRoute;
+  if (tokenToStore && tokenToStore !== compareTokenFromStorage) {
+    sessionStorage.setItem("afran_compare_token", tokenToStore);
     if (import.meta.env.DEV) {
-      console.log("[QuizPage] Token from URL stored in sessionStorage:", compareTokenFromUrl.substring(0, 12) + "...");
+      console.log("[QuizPage] Token from URL/route stored in sessionStorage:", tokenToStore.substring(0, 8) + "...");
     }
   }
   
   if (import.meta.env.DEV && compareToken) {
     console.log("[QuizPage] Compare token detected:", {
       fromUrl: !!compareTokenFromUrl,
+      fromRoute: !!compareTokenFromRoute,
       fromStorage: !!compareTokenFromStorage,
-      token: compareToken.substring(0, 12) + "...",
+      token: compareToken.substring(0, 8) + "...",
     });
   }
   
   const { userId, loading: authLoading } = useAnonAuth();
   const [attemptId, setAttemptId] = useState<string | null>(null);
+  const [quizId, setQuizId] = useState<string | null>(null);
   const answersRef = useRef<Record<number, LikertValue>>({});
   const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [lastOperationError, setLastOperationError] = useState<string | null>(null);
   const abandonedAttemptsRef = useRef<Set<string>>(new Set());
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const isCompletingRef = useRef<boolean>(false);
+  
+  // Identity gate state for invited users
+  const [showIdentityGate, setShowIdentityGate] = useState(false);
+  const [inviterName, setInviterName] = useState<string | null>(null);
+  const [identityData, setIdentityData] = useState<{ firstName: string; lastName?: string; phone: string } | null>(null);
 
-  // Load attempt ID from localStorage
+  // Load quiz ID and attempt ID with ownership validation
   useEffect(() => {
-    const stored = localStorage.getItem("afran_attempt_id");
-    if (stored) {
-      setAttemptId(stored);
-      console.log("[QuizPage] Loaded attempt ID from localStorage:", stored);
-    } else {
-      console.error("[QuizPage] No attempt ID found in localStorage");
-      navigate("/");
-    }
-  }, [navigate]);
+    const loadAttempt = async () => {
+      if (authLoading || !userId) {
+        return;
+      }
+
+      try {
+        // Get quiz ID
+        const currentQuizId = await getQuizId();
+        setQuizId(currentQuizId);
+        
+        if (import.meta.env.DEV) {
+          console.log("[QuizPage] Participant ID:", userId.substring(0, 8) + "...");
+          console.log("[QuizPage] Quiz ID:", currentQuizId);
+          console.log("[QuizPage] Compare token:", compareToken ? compareToken.substring(0, 8) + "..." : "none");
+        }
+
+        // Get storage key based on token presence
+        const storageKey = getAttemptStorageKey(currentQuizId, userId, compareToken);
+        
+        if (import.meta.env.DEV) {
+          console.log("[QuizPage] Storage key:", storageKey);
+        }
+
+        // Try to load stored attempt ID
+        const storedAttemptId = localStorage.getItem(storageKey);
+        
+        if (import.meta.env.DEV) {
+          console.log("[QuizPage] Stored attempt ID:", storedAttemptId ? storedAttemptId.substring(0, 8) + "..." : "none");
+        }
+
+        // Validate ownership if attempt ID exists
+        if (storedAttemptId) {
+          const { data: attempt, error } = await supabase
+            .from("attempts")
+            .select("id, participant_id, quiz_id, status")
+            .eq("id", storedAttemptId)
+            .eq("participant_id", userId)
+            .eq("quiz_id", currentQuizId)
+            .maybeSingle();
+
+          if (import.meta.env.DEV) {
+            console.log("[QuizPage] Ownership validation:", {
+              attemptFound: !!attempt,
+              error: error ? error.message : null,
+              status: attempt?.status,
+            });
+          }
+
+          if (attempt && !error) {
+            // Valid attempt owned by current participant
+            setAttemptId(attempt.id);
+            if (import.meta.env.DEV) {
+              console.log("[QuizPage] ✅ Using validated attempt ID:", attempt.id.substring(0, 8) + "...");
+            }
+            return;
+          } else {
+            // Attempt not found or not owned - clear invalid storage
+            if (import.meta.env.DEV) {
+              console.warn("[QuizPage] ⚠️ Stored attempt invalid, clearing storage key");
+            }
+            localStorage.removeItem(storageKey);
+          }
+        }
+
+        // Check if identity gate is needed for invited users
+        if (compareToken) {
+          const identityGateKey = `afran_invited_identity_done_${compareToken}`;
+          const identityDone = sessionStorage.getItem(identityGateKey);
+          
+          if (!identityDone) {
+            // Need to show identity gate - fetch inviter name
+            if (import.meta.env.DEV) {
+              console.log("[QuizPage] Identity gate needed for compare token");
+            }
+            
+            try {
+              const session = await getCompareSession(compareToken);
+              if (session) {
+                const inviterFullName = session.inviterFirstName 
+                  ? [session.inviterFirstName, session.inviterLastName].filter(Boolean).join(" ").trim()
+                  : null;
+                setInviterName(inviterFullName || session.inviterFirstName || null);
+                setShowIdentityGate(true);
+                
+                if (import.meta.env.DEV) {
+                  console.log("[QuizPage] Showing identity gate with inviter:", inviterFullName || "unknown");
+                }
+                return; // Don't create attempt yet - wait for identity gate
+              }
+            } catch (gateError) {
+              if (import.meta.env.DEV) {
+                console.error("[QuizPage] Error fetching compare session for identity gate:", gateError);
+              }
+              // Continue with normal flow if session fetch fails
+            }
+          } else {
+            // Identity already collected - use stored identity data
+            const storedIdentity = sessionStorage.getItem(`afran_invited_identity_${compareToken}`);
+            if (storedIdentity) {
+              try {
+                const identity = JSON.parse(storedIdentity);
+                setIdentityData(identity);
+                if (import.meta.env.DEV) {
+                  console.log("[QuizPage] Using stored identity data for compare token");
+                }
+              } catch (e) {
+                if (import.meta.env.DEV) {
+                  console.warn("[QuizPage] Failed to parse stored identity:", e);
+                }
+              }
+            }
+          }
+        }
+
+        // No valid stored attempt - create new one
+        if (import.meta.env.DEV) {
+          console.log("[QuizPage] Creating new attempt...");
+        }
+
+        // Get identity data: from identity gate (if compare flow) or intake data (normal flow)
+        let firstName = "کاربر";
+        let lastName: string | null = null;
+        let phone = "";
+
+        if (compareToken) {
+          // Compare flow: use invitee identity from sessionStorage
+          const inviteeFirstName = sessionStorage.getItem("afran_invitee_first_name");
+          const inviteeLastName = sessionStorage.getItem("afran_invitee_last_name");
+          const inviteePhone = sessionStorage.getItem("afran_invitee_phone");
+          
+          if (inviteeFirstName) {
+            firstName = inviteeFirstName;
+            lastName = inviteeLastName || null;
+            phone = inviteePhone || "";
+          } else if (identityData) {
+            // Fallback to identityData if sessionStorage not set
+            firstName = identityData.firstName;
+            lastName = identityData.lastName || null;
+            phone = identityData.phone;
+          }
+        } else {
+          // Normal flow: get intake data from sessionStorage
+          const intakeData = sessionStorage.getItem("quiz_intake_v1");
+          if (intakeData) {
+            try {
+              const intake = JSON.parse(intakeData);
+              firstName = intake.firstName || firstName;
+              lastName = intake.lastName || null;
+              phone = intake.mobile || "";
+            } catch (e) {
+              if (import.meta.env.DEV) {
+                console.warn("[QuizPage] Failed to parse intake data:", e);
+              }
+            }
+          }
+        }
+
+        const newAttemptId = await startAttempt({
+          quizId: currentQuizId,
+          participantId: userId,
+          userFirstName: firstName,
+          userLastName: lastName,
+          userPhone: phone || null, // Null if no phone (nullable in DB)
+          userAgent: navigator.userAgent,
+        });
+
+        // Store new attempt ID in scoped key
+        localStorage.setItem(storageKey, newAttemptId);
+        setAttemptId(newAttemptId);
+
+        if (import.meta.env.DEV) {
+          console.log("[QuizPage] ✅ Created and stored new attempt ID:", newAttemptId.substring(0, 8) + "...");
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : "Unknown error";
+        console.error("[QuizPage] Error loading/creating attempt:", error);
+        setLastOperationError(errorMsg);
+        if (import.meta.env.DEV) {
+          alert(`DEV ERROR: Failed to load/create attempt: ${errorMsg}`);
+        }
+      }
+    };
+
+    loadAttempt();
+  }, [userId, authLoading, compareToken, navigate]);
 
   // Handle page visibility change and beforeunload for abandon
   useEffect(() => {
@@ -163,21 +355,70 @@ export default function QuizPage() {
     // Set guard immediately (before any async calls)
     isCompletingRef.current = true;
 
-    // Validate attemptId exists
-    const currentAttemptId = attemptId || localStorage.getItem("afran_attempt_id");
-    
-    if (!currentAttemptId) {
-      const errorMsg = "[QuizPage] CRITICAL: No attempt ID found in state or localStorage";
-      console.error(errorMsg);
-      if (import.meta.env.DEV) {
+    // ============================================
+    // CRITICAL: Compute live compare token at top (before any try/await)
+    // ============================================
+    const currentSearchParams = new URLSearchParams(window.location.search);
+    const liveTokenFromUrl = currentSearchParams.get("compare") || currentSearchParams.get("token");
+    const liveTokenFromStorage = sessionStorage.getItem("afran_compare_token");
+    const liveCompareToken = liveTokenFromUrl || liveTokenFromStorage || null;
+
+    // Validate attemptId exists - if missing, try to recover
+    if (!attemptId || !userId || !quizId) {
+      const errorMsg = "[QuizPage] CRITICAL: Missing attempt ID, user ID, or quiz ID";
+      console.error(errorMsg, { attemptId, userId, quizId });
+      
+      // Try to recover: reload attempt if missing
+      if (!attemptId && userId && quizId) {
+        if (import.meta.env.DEV && requestId) {
+          console.log(`[QuizPage] [${requestId}] Attempting to recover missing attemptId...`);
+        }
+        try {
+          const currentQuizId = await getQuizId();
+          const storageKey = getAttemptStorageKey(currentQuizId, userId, liveCompareToken);
+          const storedAttemptId = localStorage.getItem(storageKey);
+          if (storedAttemptId) {
+            const { data: attempt } = await supabase
+              .from("attempts")
+              .select("id, status")
+              .eq("id", storedAttemptId)
+              .eq("participant_id", userId)
+              .maybeSingle();
+            if (attempt && attempt.status !== "completed") {
+              setAttemptId(attempt.id);
+              if (import.meta.env.DEV && requestId) {
+                console.log(`[QuizPage] [${requestId}] Recovered attemptId:`, attempt.id.substring(0, 8) + "...");
+              }
+              // Retry completion after recovery
+              setTimeout(() => handleComplete(quizAnswers), 100);
+              return;
+            }
+          }
+        } catch (recoverError) {
+          if (import.meta.env.DEV && requestId) {
+            console.error(`[QuizPage] [${requestId}] Failed to recover attemptId:`, recoverError);
+          }
+        }
+      }
+      
+      if (import.meta.env.DEV && requestId) {
         alert(`DEV ERROR: ${errorMsg}. Cannot complete attempt.`);
       }
       // Unlock before navigating (graceful degradation)
       isCompletingRef.current = false;
       setIsSubmitting(false);
-      // Still navigate to result (graceful degradation)
-      navigate("/result");
+      setLastOperationError("خطا: اطلاعات آزمون یافت نشد. لطفاً دوباره تلاش کنید.");
       return;
+    }
+
+    const currentAttemptId = attemptId;
+
+    if (import.meta.env.DEV && requestId) {
+      console.log(`[QuizPage] [${requestId}] 🔍 Live token check (top-level):`, {
+        fromUrl: !!liveTokenFromUrl,
+        fromStorage: !!liveTokenFromStorage,
+        token: liveCompareToken ? liveCompareToken.substring(0, 12) + "..." : null,
+      });
     }
 
     // Set submitting flag
@@ -206,6 +447,24 @@ export default function QuizPage() {
       const normalizedAnswers = normalizeAnswers(answersArray);
       const totalScore = computeTotalScore(normalizedAnswers);
       const dimensionScores = computeDimensionScores(normalizedAnswers);
+      
+      if (import.meta.env.DEV && requestId) {
+        console.log(`[QuizPage] [${requestId}] 🔍 Computed dimension scores before completeAttempt:`, {
+          dimensionScores,
+          totalScore,
+          dimensionScoresKeys: Object.keys(dimensionScores),
+          dimensionScoresValues: Object.values(dimensionScores),
+        });
+      }
+      
+      if (import.meta.env.DEV) {
+        console.log("[QuizPage] 🔍 Computed dimension scores before completeAttempt:", {
+          dimensionScores,
+          totalScore,
+          dimensionScoresKeys: Object.keys(dimensionScores),
+          dimensionScoresValues: Object.values(dimensionScores),
+        });
+      }
 
       // Calculate level for result page
       const breakdown = scoreAfranR14(quizAnswers);
@@ -229,12 +488,40 @@ export default function QuizPage() {
         scoreBandId = null;
       }
 
+      if (import.meta.env.DEV && requestId) {
+        console.log(`[QuizPage] [${requestId}] 🔍 Calling completeAttempt with payload:`, {
+          attemptId: currentAttemptId.substring(0, 8) + "...",
+          totalScore,
+          dimensionScores,
+          scoreBandId,
+          dimensionScoresType: typeof dimensionScores,
+          dimensionScoresIsObject: typeof dimensionScores === "object" && dimensionScores !== null,
+          dimensionScoresKeys: Object.keys(dimensionScores),
+        });
+      }
+      
       const completedData = await completeAttempt({
         attemptId: currentAttemptId,
         totalScore,
         dimensionScores,
         scoreBandId,
       });
+      
+      if (import.meta.env.DEV && requestId) {
+        console.log(`[QuizPage] [${requestId}] 🔍 completeAttempt returned:`, {
+          id: completedData.id.substring(0, 8) + "...",
+          status: completedData.status,
+          total_score: completedData.total_score,
+          dimension_scores: completedData.dimension_scores,
+          dimension_scoresType: typeof completedData.dimension_scores,
+        });
+        console.log(`[QuizPage] [${requestId}] 📊 Step 1 - Captured IDs:`, {
+          compareToken: liveCompareToken ? liveCompareToken.substring(0, 12) + "..." : null,
+          attemptBId: currentAttemptId.substring(0, 8) + "...",
+          participantId: userId.substring(0, 8) + "...",
+          quizId: quizId,
+        });
+      }
 
       if (import.meta.env.DEV && requestId) {
         console.log(`[QuizPage] [${requestId}] ✅ Attempt completed successfully:`, currentAttemptId);
@@ -242,31 +529,16 @@ export default function QuizPage() {
       }
       setLastOperationError(null);
 
-      // Clean up localStorage and in-memory state after successful completion
-      localStorage.removeItem("afran_attempt_id");
+      // Clean up scoped storage key and in-memory state after successful completion
+      if (userId && quizId) {
+        const storageKey = getAttemptStorageKey(quizId, userId, liveCompareToken);
+        localStorage.removeItem(storageKey);
+        if (import.meta.env.DEV && requestId) {
+          console.log(`[QuizPage] [${requestId}] Cleared storage key:`, storageKey);
+        }
+      }
       setAttemptId(null);
       // DO NOT unlock on success - keep lock until navigation completes
-
-      // ============================================
-      // CRITICAL: Re-read token LIVE on completion
-      // ============================================
-      // Read token from URLSearchParams (live, not from render-time state)
-      const currentSearchParams = new URLSearchParams(window.location.search);
-      const liveTokenFromUrl = currentSearchParams.get("compare") || currentSearchParams.get("token");
-      
-      // Read token from sessionStorage (live, not from render-time state)
-      const liveTokenFromStorage = sessionStorage.getItem("afran_compare_token");
-      
-      // Determine live compare token
-      const liveCompareToken = liveTokenFromUrl || liveTokenFromStorage;
-      
-      if (import.meta.env.DEV && requestId) {
-        console.log(`[QuizPage] [${requestId}] 🔍 Live token check:`, {
-          fromUrl: !!liveTokenFromUrl,
-          fromStorage: !!liveTokenFromStorage,
-          token: liveCompareToken ? liveCompareToken.substring(0, 12) + "..." : null,
-        });
-      }
 
       // ============================================
       // CRITICAL: Handle compare flow if token exists
@@ -328,14 +600,25 @@ export default function QuizPage() {
           }
           
           // Navigate to compare result page
-          navigate(`/compare/result/${liveCompareToken}`);
-          
-          // Remove token from sessionStorage AFTER successful navigation
-          // (Navigation will unmount component, but cleanup is good practice)
-          sessionStorage.removeItem("afran_compare_token");
+          const targetUrl = `/compare/result/${liveCompareToken}`;
           
           if (import.meta.env.DEV && requestId) {
-            console.log(`[QuizPage] [${requestId}] Token cleared from sessionStorage after navigation`);
+            console.log(`[QuizPage] [${requestId}] 🎯 Navigation target:`, targetUrl);
+            console.log(`[QuizPage] [${requestId}] 📊 Step 1 - Final IDs:`, {
+              compareToken: liveCompareToken.substring(0, 12) + "...",
+              attemptBId: currentAttemptId.substring(0, 8) + "...",
+              sessionId: rpcData || "unknown",
+              navigationUrl: targetUrl,
+            });
+          }
+          
+          navigate(targetUrl);
+          
+          // DO NOT remove token from sessionStorage yet - wait until CompareResultPage successfully loads
+          // Token will be cleared after successful render in CompareResultPage
+          
+          if (import.meta.env.DEV && requestId) {
+            console.log(`[QuizPage] [${requestId}] ✅ Navigated to compare result (token kept in sessionStorage)`);
           }
           
           // Lock remains until component unmounts (navigation)
@@ -413,8 +696,35 @@ export default function QuizPage() {
     }
   };
 
-  // Show loading if auth is still loading or attempt ID is missing
-  if (authLoading || !attemptId) {
+  // Handle identity gate submission
+  const handleIdentityGateSubmit = (data: { firstName: string; lastName?: string; phone: string }) => {
+    if (!compareToken) return;
+    
+    // Store identity data
+    setIdentityData(data);
+    
+    // Mark identity gate as done
+    const identityGateKey = `afran_invited_identity_done_${compareToken}`;
+    sessionStorage.setItem(identityGateKey, "1");
+    sessionStorage.setItem(`afran_invited_identity_${compareToken}`, JSON.stringify(data));
+    
+    // Close gate
+    setShowIdentityGate(false);
+    
+    if (import.meta.env.DEV) {
+      console.log("[QuizPage] Identity gate submitted:", {
+        firstName: data.firstName,
+        lastName: data.lastName,
+        phone: data.phone.substring(0, 4) + "***",
+      });
+    }
+    
+    // Reload attempt (will create new attempt with identity data)
+    window.location.reload();
+  };
+
+  // Show loading if auth is still loading or attempt ID is missing (and identity gate not shown)
+  if (authLoading || (!attemptId && !showIdentityGate)) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">

@@ -6,6 +6,7 @@ import { useAnonAuth } from "@/hooks/useAnonAuth";
 import { supabase } from "@/lib/supabaseClient";
 import { getQuizId } from "@/features/attempts/getQuizId";
 import { startAttempt } from "@/features/attempts/createAttempt";
+import { getAttemptStorageKey } from "@/features/attempts/getAttemptStorageKey";
 import type { QuizIntake } from "@/features/quiz/types";
 
 export default function LandingPage() {
@@ -131,7 +132,14 @@ export default function LandingPage() {
       };
 
       sessionStorage.setItem("quiz_intake_v1", JSON.stringify(intake));
-      localStorage.setItem("afran_attempt_id", attemptId);
+      
+      // Store attempt ID in scoped storage key (no compare token for normal flow)
+      const storageKey = getAttemptStorageKey(quizId, user.id, null);
+      localStorage.setItem(storageKey, attemptId);
+      
+      if (import.meta.env.DEV) {
+        console.log("[LandingPage] Stored attempt ID in scoped key:", storageKey);
+      }
 
       // Navigate to quiz
       navigate("/quiz");
