@@ -16,7 +16,6 @@ interface SocialShareSectionProps {
   level: LevelKey;
   firstName: string | null;
   score: number;
-  levelLabel: "کم" | "متوسط" | "زیاد";
   attemptData?: {
     quiz_id: string;
     score_band_id: number | null;

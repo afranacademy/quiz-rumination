@@ -1,6 +1,5 @@
 import { RotateCcw } from "lucide-react";
 import { Button } from "./ui/button";
-import { BrandLogo } from "@/components/BrandLogo";
 import { ResultHeader } from "@/features/quiz/components/ResultHeader";
 import { RecommendationSection } from "@/features/quiz/components/RecommendationCard";
 import { SocialShareSection } from "@/features/quiz/components/SocialShareSection";
@@ -102,7 +101,6 @@ export function ResultPage({ score, level, firstName, onRetake, isPreviewMode = 
           level={level}
           firstName={firstName}
           score={score}
-          levelLabel={getLevelLabel(level)}
           attemptData={attemptData}
           attemptId={attemptId}
         />
