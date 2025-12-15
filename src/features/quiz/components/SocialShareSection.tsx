@@ -1,6 +1,5 @@
 /// <reference types="vite/client" />
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState } from "react";
 import { Button } from "@/app/components/ui/button";
 import { AppModal } from "@/components/AppModal";
 import { SocialFeatureCard } from "./SocialFeatureCard";
@@ -8,9 +7,7 @@ import { Share2, Check, Copy } from "lucide-react";
 import { shareOrCopyText, copyText } from "@/features/share/shareClient";
 import { buildSummaryPdfBlob } from "@/features/share/buildSummaryPdf";
 import { pickSummaryRange } from "@/features/share/summaryRanges";
-import { toast } from "sonner";
 import type { LevelKey } from "../types";
-import { trackShareEvent } from "@/lib/trackShareEvent";
 import { CompareInviteSection } from "@/features/compare/components/CompareInviteSection";
 import { MindPatternCard } from "./MindPatternCard";
 import { INVITE_LINK_TEXT, INVITE_LINK_URL } from "@/utils/pdfExport";
@@ -31,10 +28,8 @@ interface SocialShareSectionProps {
 export function SocialShareSection({
   firstName,
   score,
-  attemptData,
   attemptId,
 }: SocialShareSectionProps) {
-  const navigate = useNavigate();
   const [modalState, setModalState] = useState<{
     type: "summary" | null;
   }>({ type: null });
@@ -46,7 +41,6 @@ export function SocialShareSection({
   const quizTitle = "آزمون سنجش نشخوار فکری (ذهن وراج)";
   const maxScore = 48;
   const currentUrl = typeof window !== "undefined" ? window.location.href : undefined;
-  const quizUrl = typeof window !== "undefined" ? window.location.origin : "";
 
   // Get summary range based on score
   const summaryRange = pickSummaryRange(score);
