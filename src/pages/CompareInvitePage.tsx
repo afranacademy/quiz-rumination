@@ -94,13 +94,15 @@ export default function CompareInvitePage() {
   }
 
   if (error) {
+    const isExpired = error === "invalid or expired link" || error.includes("expired");
+    
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="text-center space-y-4 max-w-md">
           <h1 className="text-xl text-foreground font-medium">لینک نامعتبر یا منقضی شده</h1>
           <p className="text-sm text-foreground/70">
-            {error === "invalid or expired link"
-              ? "این لینک معتبر نیست یا منقضی شده است."
+            {isExpired
+              ? "این لینک منقضی شده است. لطفاً دوباره لینک دعوت بسازید."
               : error}
           </p>
           <Button onClick={() => navigate("/")} variant="outline">
@@ -136,8 +138,8 @@ export default function CompareInvitePage() {
         )}
 
         {/* Dev Panel */}
-        {import.meta.env.DEV && (
-          <div className="fixed bottom-4 left-4 bg-black/90 text-white text-xs p-4 rounded-lg font-mono max-w-sm z-50 border border-white/20">
+        {import.meta.env.DEV && session && (
+          <div className="fixed bottom-4 left-4 bg-black/90 text-white text-xs p-4 rounded-lg font-mono max-w-sm z-50 border border-white/20 max-h-96 overflow-auto">
             <div className="font-bold mb-2 text-yellow-400">Compare Invite Dev Panel</div>
             <div className="space-y-1">
               <div>
@@ -160,10 +162,30 @@ export default function CompareInvitePage() {
                   : "N/A"}
               </div>
               <div>
-                <span className="text-gray-400">Expires:</span>{" "}
+                <span className="text-gray-400">Expires At:</span>{" "}
                 {session.expiresAt
-                  ? new Date(session.expiresAt).toLocaleString("fa-IR")
-                  : "N/A"}
+                  ? new Date(session.expiresAt).toISOString()
+                  : "NULL"}
+              </div>
+              <div>
+                <span className="text-gray-400">Now:</span>{" "}
+                {new Date().toISOString()}
+              </div>
+              <div>
+                <span className="text-gray-400">Is Valid:</span>{" "}
+                <span className={(() => {
+                  if (!session.expiresAt) return "text-green-400";
+                  const expiresAt = new Date(session.expiresAt);
+                  const now = new Date();
+                  return expiresAt > now ? "text-green-400" : "text-red-400";
+                })()}>
+                  {(() => {
+                    if (!session.expiresAt) return "YES (no expiration)";
+                    const expiresAt = new Date(session.expiresAt);
+                    const now = new Date();
+                    return expiresAt > now ? "YES" : "NO (expired)";
+                  })()}
+                </span>
               </div>
             </div>
           </div>

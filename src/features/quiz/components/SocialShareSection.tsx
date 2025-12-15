@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/app/components/ui/button";
 import { AppModal } from "@/components/AppModal";
 import { SocialFeatureCard } from "./SocialFeatureCard";
@@ -16,9 +17,11 @@ import { toast } from "sonner";
 import { createCompareInvite } from "@/features/compare/createCompareInvite";
 import { getLatestCompletedAttempt } from "@/features/compare/getLatestCompletedAttempt";
 import { useAnonAuth } from "@/hooks/useAnonAuth";
+import { supabase } from "@/lib/supabaseClient";
 import type { LevelKey, LikertValue } from "../types";
 import { getMindProfileTemplate, type MindProfileTemplate } from "@/features/mindProfile/getMindProfileTemplate";
 import type { DimensionKey } from "@/domain/quiz/types";
+import { trackShareEvent } from "@/lib/trackShareEvent";
 
 interface SocialShareSectionProps {
   level: LevelKey;
@@ -30,13 +33,16 @@ interface SocialShareSectionProps {
     score_band_id: number | null;
     dimension_scores: Record<string, number>;
   } | null;
+  attemptId?: string | null;
 }
 
 export function SocialShareSection({
   firstName,
   score,
   attemptData,
+  attemptId,
 }: SocialShareSectionProps) {
+  const navigate = useNavigate();
   const { userId, loading: authLoading } = useAnonAuth();
   const [modalState, setModalState] = useState<{
     type: "summary" | "guide" | "invite" | null;
@@ -58,6 +64,7 @@ export function SocialShareSection({
   const [mindProfileError, setMindProfileError] = useState<string | null>(null);
   const [isCreatingCompareInvite, setIsCreatingCompareInvite] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [inviteLoading, setInviteLoading] = useState(false);
 
   const quizTitle = "آزمون سنجش نشخوار فکری (ذهن وراج)";
@@ -263,6 +270,12 @@ export function SocialShareSection({
           await navigator.share({
             text: mindPatternData.shareText,
           });
+          // Track native share
+          await trackShareEvent({
+            cardType: "my_mind",
+            action: "native_share",
+            attemptId,
+          });
           setShareStatus({ type: "share", message: "ارسال شد" });
           setTimeout(() => {
             setModalState({ type: null });
@@ -282,6 +295,12 @@ export function SocialShareSection({
       // Fallback to copy
       const success = await copyText(mindPatternData.shareText);
       if (success) {
+        // Track share_text (copy of share text)
+        await trackShareEvent({
+          cardType: "my_mind",
+          action: "share_text",
+          attemptId,
+        });
         setShareStatus({ type: "copy", message: "کپی شد" });
         setTimeout(() => {
           setShareStatus({ type: null, message: null });
@@ -303,6 +322,12 @@ export function SocialShareSection({
     if (!mindPatternData) return;
     const success = await copyText(mindPatternData.shareText);
     if (success) {
+      // Track share_text (copy of share text)
+      await trackShareEvent({
+        cardType: "my_mind",
+        action: "share_text",
+        attemptId,
+      });
       setShareStatus({ type: "copy", message: "کپی شد" });
       setTimeout(() => {
         setShareStatus({ type: null, message: null });
@@ -484,17 +509,77 @@ export function SocialShareSection({
         });
       }
 
-      // Call Supabase RPC to create compare invite
+      // Validate attempt is completed with total_score
+      const { data: attemptCheck, error: attemptCheckError } = await supabase
+        .from("attempts")
+        .select("id, status, total_score")
+        .eq("id", attemptAId)
+        .maybeSingle();
+
+      if (attemptCheckError) {
+        const errorMsg = "خطا در بررسی اطلاعات آزمون";
+        if (import.meta.env.DEV) {
+          console.error("[SocialShareSection] ❌ Error checking attempt:", {
+            code: attemptCheckError.code,
+            message: attemptCheckError.message,
+            details: attemptCheckError.details,
+            hint: attemptCheckError.hint,
+          });
+        }
+        setShareStatus({
+          type: null,
+          message: errorMsg,
+        });
+        toast.error(errorMsg);
+        setModalState({ type: "invite" });
+        setInviteLoading(false);
+        return;
+      }
+
+      if (!attemptCheck) {
+        const errorMsg = "اطلاعات آزمون یافت نشد";
+        if (import.meta.env.DEV) {
+          console.error("[SocialShareSection] ❌ Attempt not found");
+        }
+        setShareStatus({
+          type: null,
+          message: errorMsg,
+        });
+        toast.error(errorMsg);
+        setModalState({ type: "invite" });
+        setInviteLoading(false);
+        return;
+      }
+
+      if (attemptCheck.status !== "completed" || attemptCheck.total_score === null) {
+        const errorMsg = "اول آزمون را کامل کنید";
+        if (import.meta.env.DEV) {
+          console.error("[SocialShareSection] ❌ Attempt not completed:", {
+            status: attemptCheck.status,
+            total_score: attemptCheck.total_score,
+          });
+        }
+        setShareStatus({
+          type: null,
+          message: errorMsg,
+        });
+        toast.error(errorMsg);
+        setModalState({ type: "invite" });
+        setInviteLoading(false);
+        return;
+      }
+
+      // Call Supabase RPC to create compare invite (24 hours = 1440 minutes)
       const rpcPayload = {
         p_attempt_a_id: attemptAId,
-        p_expires_in_minutes: 60,
+        p_expires_in_minutes: 1440,
       };
 
       if (import.meta.env.DEV) {
         console.log("[SocialShareSection] RPC payload:", rpcPayload);
       }
 
-      const result = await createCompareInvite(attemptAId, 60);
+      const result = await createCompareInvite(attemptAId, 1440);
 
       if (import.meta.env.DEV) {
         console.log("[SocialShareSection] ✅ Invite created:", {
@@ -506,8 +591,9 @@ export function SocialShareSection({
         });
       }
 
-      // Set invite URL and show modal
+      // Set invite URL and token, then show modal
       setInviteUrl(result.url);
+      setInviteToken(result.invite_token);
       setModalState({ type: "invite" });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "خطا در ایجاد لینک دعوت. لطفاً دوباره تلاش کنید.";
@@ -1089,6 +1175,9 @@ export function SocialShareSection({
               </div>
 
               <p className="text-xs text-muted-foreground/80 leading-6 text-center">
+                این لینک تا ۲۴ ساعت معتبر است.
+              </p>
+              <p className="text-xs text-muted-foreground/70 leading-6 text-center">
                 بعد از تکمیل آزمون توسط نفر دوم، مقایسه فعال می‌شود.
               </p>
 
@@ -1141,6 +1230,20 @@ export function SocialShareSection({
                   )}
                 </Button>
               </div>
+
+              {/* View Compare Card Button */}
+              {inviteToken && (
+                <Button
+                  onClick={() => {
+                    navigate(`/compare/result/${inviteToken}`);
+                    setModalState({ type: null });
+                  }}
+                  variant="outline"
+                  className="w-full rounded-xl min-h-[44px] bg-white/10 border-white/20 mt-2"
+                >
+                  دیدن کارت مقایسه
+                </Button>
+              )}
             </>
           ) : (
             <div className="p-4 rounded-2xl bg-red-500/20 border border-red-500/30 text-center">
