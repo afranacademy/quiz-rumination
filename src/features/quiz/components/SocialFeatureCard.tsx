@@ -33,7 +33,7 @@ export function SocialFeatureCard({
 
   return (
     <div
-      className={`rounded-2xl border backdrop-blur-xl shadow-lg shadow-black/10 p-4 sm:p-5 md:p-6 text-right transition-all hover:brightness-105 ${emphasisClasses[emphasis]}`}
+      className={`rounded-3xl border backdrop-blur-2xl shadow-xl shadow-black/10 p-4 sm:p-5 md:p-6 text-right transition-all hover:brightness-105 ${emphasisClasses[emphasis]}`}
     >
       {/* Header */}
       <div className="flex items-start gap-3 mb-3">

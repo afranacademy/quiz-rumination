@@ -1,4 +1,5 @@
 import { buildMindPatternItems, type MindPatternItem } from "./buildMindPattern";
+import { INVITE_LINK_TEXT, INVITE_LINK_URL } from "@/utils/pdfExport";
 
 export function buildMindPatternShareText(
   items: MindPatternItem[],
@@ -21,8 +22,9 @@ export function buildMindPatternShareText(
     ...bulletPoints,
     "",
     "این نتیجه مربوط به آزمون «سنجش نشخوار فکری – ذهن وراج» است.",
-    "اگر دوست داری الگوی ذهنی خودت را بشناسی، می‌توانی از اینجا آزمون را انجام بدهی:",
-    quizUrl,
+    "",
+    INVITE_LINK_TEXT,
+    INVITE_LINK_URL,
   ];
 
   return lines.join("\n");

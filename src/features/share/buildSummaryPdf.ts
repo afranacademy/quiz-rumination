@@ -122,6 +122,14 @@ export async function buildSummaryPdfBlob(input: {
     <div class="footer-title">آزمون سنجش نشخوار فکری (ذهن وراج)</div>
     <div>این فایل بخشی از آزمون سنجش نشخوار فکری افران است و تشخیص بالینی محسوب نمی‌شود.</div>
   </div>
+  
+  <div class="footer" style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #cbd5e0;">
+    <div style="font-size: 12px; color: #4a5568; line-height: 1.8; text-align: center;">
+      اگر دوست داری الگوی ذهنی خودت رو دقیق‌تر بشناسی،<br />
+      می‌تونی این آزمون سنجش نشخوار فکری رو تکمیل کنی:<br />
+      <a href="https://zaya.io/testruminationnewtest" style="color: #2d3442; text-decoration: underline; word-break: break-all;">https://zaya.io/testruminationnewtest</a>
+    </div>
+  </div>
 </body>
 </html>
   `;

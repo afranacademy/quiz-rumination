@@ -2,6 +2,7 @@ import { Button } from "@/app/components/ui/button";
 import { cn } from "@/app/components/ui/utils";
 import { Icon } from "./Icon";
 import type { LevelKey } from "../types";
+import { LINKS } from "@/config/links";
 
 interface RecommendationSectionProps {
   title: string;
@@ -78,21 +79,27 @@ export function RecommendationSection({ title, paragraphs, ctas, level, firstNam
           <div className="rounded-2xl bg-black/40 p-3 sm:p-4 space-y-3">
             {ctas
               .filter((cta) => cta.kind === "primary")
-              .map((cta, index) => (
-                <Button
-                  key={index}
-                  size="lg"
-                  variant="default"
-                  className={cn(
-                    "w-full rounded-2xl font-bold transition-all min-h-[48px] h-[52px] sm:h-[52px] bg-teal-600 hover:bg-white backdrop-blur-sm shadow-[0_0_0_2px_rgba(255,255,255,0.2),0_15px_40px_rgba(13,148,136,0.3)] border-2 border-teal-400/40 text-white hover:text-teal-700 hover:border-teal-600/60 text-sm sm:text-base"
-                  )}
-                  onClick={() => {
-                    console.log("CTA clicked:", cta);
-                  }}
-                >
-                  {cta.label}
-                </Button>
-              ))}
+              .map((cta, index) => {
+                // Determine which link to use based on CTA label
+                const isEpisodeZero = cta.label.includes("اپیزود صفر");
+                const link = isEpisodeZero ? LINKS.EPISODE_ZERO : LINKS.MIND_CHATTER_COURSE;
+                
+                return (
+                  <Button
+                    key={index}
+                    size="lg"
+                    variant="default"
+                    className={cn(
+                      "w-full rounded-2xl font-bold transition-all min-h-[48px] h-[52px] sm:h-[52px] bg-teal-600 hover:bg-white backdrop-blur-sm shadow-[0_0_0_2px_rgba(255,255,255,0.2),0_15px_40px_rgba(13,148,136,0.3)] border-2 border-teal-400/40 text-white hover:text-teal-700 hover:border-teal-600/60 text-sm sm:text-base"
+                    )}
+                    onClick={() => {
+                      window.open(link, "_blank");
+                    }}
+                  >
+                    {cta.label}
+                  </Button>
+                );
+              })}
             
             {/* Reassurance line */}
             <p className="mt-3 text-xs leading-6 text-white/80 text-center font-medium">

@@ -2,14 +2,15 @@ import { RotateCcw } from "lucide-react";
 import { Button } from "./ui/button";
 import { BrandLogo } from "@/components/BrandLogo";
 import { ResultHeader } from "@/features/quiz/components/ResultHeader";
-import { ResultBlocks } from "@/features/quiz/components/ResultBlocks";
 import { RecommendationSection } from "@/features/quiz/components/RecommendationCard";
 import { SocialShareSection } from "@/features/quiz/components/SocialShareSection";
 import { EthicsNoticeCard } from "@/features/quiz/components/EthicsNoticeCard";
-import { Icon } from "@/features/quiz/components/Icon";
+import { ResultLevelHeaderSection } from "@/features/quiz/components/ResultLevelHeaderSection";
+import { ResultExplanationSection } from "@/features/quiz/components/ResultExplanationSection";
 import { afranR14ResultContent } from "@/features/quiz/results/afranR14Results";
 import { getLevelLabel } from "@/features/quiz/results/levelLabels";
 import type { LevelKey } from "@/features/quiz/types";
+import { useEffect } from "react";
 
 interface ResultPageProps {
   score: number;
@@ -27,13 +28,31 @@ interface ResultPageProps {
 
 export function ResultPage({ score, level, firstName, onRetake, isPreviewMode = false, attemptData, attemptId }: ResultPageProps) {
   const content = afranR14ResultContent[level];
-  
-  // Level-specific icons
-  const levelIcons: Record<LevelKey, string> = {
-    low: "level-low",
-    medium: "level-medium",
-    high: "level-high",
-  };
+
+  // DEV: Check for duplicate card rendering
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      const checkDuplicates = () => {
+        const compareTitles = Array.from(document.querySelectorAll('h2, h3'))
+          .map(el => el.textContent?.trim())
+          .filter(text => text?.includes('ذهن ما کنار هم'));
+        
+        const patternTitles = Array.from(document.querySelectorAll('h2, h3, [class*="CardTitle"]'))
+          .map(el => el.textContent?.trim())
+          .filter(text => text?.includes('الگوی ذهنی من'));
+
+        if (compareTitles.length > 1) {
+          console.warn('[ResultPage] ⚠️ DUPLICATE DETECTED: Found', compareTitles.length, 'instances of "ذهن ما کنار هم" in DOM');
+        }
+        if (patternTitles.length > 1) {
+          console.warn('[ResultPage] ⚠️ DUPLICATE DETECTED: Found', patternTitles.length, 'instances of "الگوی ذهنی من" in DOM');
+        }
+      };
+      
+      // Check after initial render
+      setTimeout(checkDuplicates, 100);
+    }
+  }, []);
 
   return (
     <div className="min-h-screen px-4 py-6" style={{ paddingTop: 'max(1.5rem, env(safe-area-inset-top))', paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}>
@@ -57,20 +76,15 @@ export function ResultPage({ score, level, firstName, onRetake, isPreviewMode = 
         {/* Result Header */}
         <ResultHeader firstName={firstName} score={score} level={level} />
 
-        {/* Title Section - Contrasting Color */}
-        <div className="bg-primary/15 backdrop-blur-2xl border border-primary/30 rounded-3xl shadow-xl shadow-black/10 p-4 sm:p-5 md:p-6 text-right">
-          <div className="flex items-center gap-2 sm:gap-3 mb-2 sm:mb-3">
-            <Icon name={levelIcons[level]} className="w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7 text-white/90 shrink-0" title={content.title} />
-            <h2 className="text-base sm:text-lg md:text-xl text-foreground font-medium">{content.title}</h2>
-          </div>
-          <h3 className="text-sm sm:text-base md:text-lg text-foreground/90 font-normal pr-8 sm:pr-10 leading-7 sm:leading-8">{content.headline}</h3>
-        </div>
+        {/* Section A: Level Header Section - Standalone header block */}
+        <ResultLevelHeaderSection 
+          level={level}
+          title={content.title}
+          headline={content.headline}
+        />
 
-        {/* Main Result Body Card */}
-        <div className="bg-white/10 backdrop-blur-2xl border border-white/20 rounded-3xl shadow-xl shadow-black/10 p-4 sm:p-5 md:p-6 text-right">
-          {/* Explanation Blocks */}
-          <ResultBlocks blocks={content.blocks} />
-        </div>
+        {/* Section B: Explanation Section - Detailed explanation blocks */}
+        <ResultExplanationSection blocks={content.blocks} />
 
         {/* Recommendation Section - Distinct Warm Accent Card */}
         <RecommendationSection

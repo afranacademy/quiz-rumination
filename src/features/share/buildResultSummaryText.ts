@@ -7,6 +7,8 @@ export type ResultSummaryInput = {
   url?: string;
 };
 
+import { INVITE_LINK_TEXT, INVITE_LINK_URL } from "@/utils/pdfExport";
+
 export function buildResultSummaryText(input: ResultSummaryInput): string {
   const { firstName, levelLabel, score, maxScore, quizTitle, url } = input;
   
@@ -33,11 +35,10 @@ export function buildResultSummaryText(input: ResultSummaryInput): string {
     meaningLine,
     "",
     ethicsLine,
+    "",
+    INVITE_LINK_TEXT,
+    INVITE_LINK_URL,
   ];
-  
-  if (url) {
-    lines.push("", url);
-  }
   
   return lines.join("\n");
 }

@@ -3,15 +3,22 @@ import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/app/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/card";
-import { RefreshCw, Link as LinkIcon, Copy, Share2 } from "lucide-react";
+import { RefreshCw, Link as LinkIcon, Share2, BookOpen, Download, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { copyText, shareOrCopyText } from "@/features/share/shareClient";
+import {
+  generatePdfBlobFromElement,
+  downloadPdf,
+  sharePdf,
+  generateComparePdfFilename,
+} from "@/utils/pdfExport";
 import { computeSimilarity } from "@/features/compare/computeSimilarity";
 import { useAnonAuth } from "@/hooks/useAnonAuth";
 import { trackShareEvent } from "@/lib/trackShareEvent";
 import { AppModal } from "@/components/AppModal";
 import { createCompareInvite } from "@/features/compare/createCompareInvite";
 import { getLatestCompletedAttempt } from "@/features/compare/getLatestCompletedAttempt";
+import { LINKS } from "@/config/links";
 import {
   DIMENSION_DEFINITIONS,
   getAlignmentLabel,
@@ -416,6 +423,22 @@ function formatExpiresAt(expiresAt: string | null): string {
   }
 }
 
+/**
+ * Masks phone number for display (safety guardrail)
+ * Shows only first 3 and last 2 digits: +98***1234
+ */
+function maskPhone(phone: string | null | undefined): string {
+  if (!phone || typeof phone !== "string") return "";
+  // Remove any non-digit characters except +
+  const cleaned = phone.replace(/[^\d+]/g, "");
+  if (cleaned.length < 6) return cleaned; // Too short to mask
+  // Show first 3 chars and last 2 chars
+  const prefix = cleaned.substring(0, 3);
+  const suffix = cleaned.substring(cleaned.length - 2);
+  const masked = "*".repeat(Math.max(0, cleaned.length - 5));
+  return `${prefix}${masked}${suffix}`;
+}
+
 export default function CompareResultPage() {
   // #region agent log - Safety: Log render start
   console.log("[CompareResultPage] 🟢 Render start");
@@ -450,6 +473,8 @@ export default function CompareResultPage() {
     expiresAt: string;
   } | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const compareContentRef = useRef<HTMLDivElement>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const maxPollingTime = 60000; // 60 seconds
   const pollingInterval = 2000; // 2 seconds
   
@@ -1431,13 +1456,52 @@ export default function CompareResultPage() {
     // #region agent log - Safety: Log state branch
     console.log("[CompareResultPage] 📊 State branch: ERROR", { error });
     // #endregion
+    
+    // Check if error is about expired/invalid link
+    const isExpiredError = error.includes("منقضی") || error.includes("معتبر نیست");
+    
+    // Handler for creating new invite (only if we have attemptA)
+    const handleCreateNewInvite = async () => {
+      if (!attemptA) {
+        toast.error("برای ساخت لینک جدید، ابتدا باید آزمون را انجام دهید");
+        return;
+      }
+      
+      setIsCreatingInvite(true);
+      try {
+        const result = await createCompareInvite(attemptA.id, 10080);
+        const newUrl = `${window.location.origin}/compare/result/${result.invite_token}`;
+        // Navigate to new link
+        navigate(newUrl);
+        toast.success("لینک جدید ساخته شد");
+      } catch (err) {
+        if (import.meta.env.DEV) {
+          console.error("[CompareResultPage] Error creating new invite:", err);
+        }
+        toast.error("خطا در ساخت لینک جدید");
+      } finally {
+        setIsCreatingInvite(false);
+      }
+    };
+    
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="text-center space-y-4 max-w-md">
-          <h1 className="text-xl text-foreground font-medium">مشکل در بارگذاری</h1>
+          <h1 className="text-xl text-foreground font-medium">
+            {isExpiredError ? "لینک منقضی شده" : "مشکل در بارگذاری"}
+          </h1>
           <p className="text-sm text-foreground/70 leading-relaxed">
             {error}
           </p>
+          {isExpiredError && attemptA && (
+            <Button
+              onClick={handleCreateNewInvite}
+              disabled={isCreatingInvite}
+              className="rounded-xl min-h-[48px] px-8 bg-primary/80 hover:bg-primary mt-4"
+            >
+              {isCreatingInvite ? "در حال ساخت..." : "ساخت لینک جدید"}
+            </Button>
+          )}
         </div>
       </div>
     );
@@ -1625,19 +1689,101 @@ export default function CompareResultPage() {
             </div>
           </div>
 
-          {/* Explanation */}
+          {/* Pending State Message */}
           <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
             <CardContent className="pt-6 text-center space-y-4">
-              <p className="text-base text-foreground/90 leading-relaxed">
-                برای دیدن مقایسه، نفر دوم باید آزمون را انجام دهد
+              <p className="text-base text-foreground/90 leading-relaxed font-medium">
+                منتظر تکمیل آزمون توسط نفر دوم
               </p>
-              <Button
-                onClick={handleCreateInvite}
-                disabled={isCreatingInvite}
-                className="rounded-xl min-h-[48px] px-8 bg-primary/80 hover:bg-primary"
-              >
-                {isCreatingInvite ? "در حال ساخت..." : "ساخت لینک دعوت"}
-              </Button>
+              
+              {/* Show invite link if token exists */}
+              {token && (
+                <div className="space-y-3">
+                  <div className="p-4 rounded-2xl bg-black/20 border border-white/15">
+                    <p className="text-xs text-muted-foreground/70 mb-2">لینک دعوت:</p>
+                    <input
+                      readOnly
+                      value={`${window.location.origin}/compare/invite/${token}`}
+                      className="w-full p-2 rounded-lg bg-black/20 border border-white/10 text-sm text-foreground font-mono break-all"
+                      onClick={(e) => (e.target as HTMLInputElement).select()}
+                    />
+                  </div>
+                  
+                  {session?.expiresAt && (
+                    <p className="text-xs text-foreground/70">
+                      این لینک {formatExpiresAt(session.expiresAt)} معتبر است
+                    </p>
+                  )}
+                  
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <Button
+                      onClick={async () => {
+                        const inviteUrl = `${window.location.origin}/compare/invite/${token}`;
+                        try {
+                          if (navigator.clipboard && navigator.clipboard.writeText) {
+                            await navigator.clipboard.writeText(inviteUrl);
+                            toast.success("لینک کپی شد");
+                          } else {
+                            const success = await copyText(inviteUrl);
+                            if (success) {
+                              toast.success("لینک کپی شد");
+                            } else {
+                              toast.error("خطا در کپی لینک");
+                            }
+                          }
+                        } catch (error) {
+                          if (import.meta.env.DEV) {
+                            console.error("[CompareResultPage] Error copying link:", error);
+                          }
+                          toast.error("خطا در کپی لینک");
+                        }
+                      }}
+                      variant="outline"
+                      className="flex-1 rounded-xl min-h-[44px] bg-white/10 border-white/20"
+                    >
+                      <Copy className="w-4 h-4 ml-2" />
+                      کپی لینک
+                    </Button>
+                    {navigator.share && (
+                      <Button
+                        onClick={async () => {
+                          try {
+                            await navigator.share({
+                              title: "دعوت به مقایسه‌ی ذهن‌ها",
+                              text: "یک نفر دوست داشته الگوی ذهنی شما و خودش رو کنار هم ببینه.",
+                              url: `${window.location.origin}/compare/invite/${token}`,
+                            });
+                          } catch (error: any) {
+                            if (error.name !== "AbortError" && import.meta.env.DEV) {
+                              console.error("[CompareResultPage] Error sharing:", error);
+                            }
+                          }
+                        }}
+                        className="flex-1 rounded-xl min-h-[44px] bg-primary/80 hover:bg-primary border-primary/40"
+                      >
+                        <Share2 className="w-4 h-4 ml-2" />
+                        اشتراک‌گذاری
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {/* If no token, show create invite button */}
+              {!token && (
+                <>
+                  <p className="text-sm text-foreground/70 leading-relaxed">
+                    برای دیدن مقایسه، نفر دوم باید آزمون را انجام دهد
+                  </p>
+                  <Button
+                    onClick={handleCreateInvite}
+                    disabled={isCreatingInvite}
+                    className="rounded-xl min-h-[48px] px-8 bg-primary/80 hover:bg-primary"
+                  >
+                    {isCreatingInvite ? "در حال ساخت..." : "ساخت لینک دعوت"}
+                  </Button>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -1969,29 +2115,131 @@ export default function CompareResultPage() {
     }
   };
 
-  // Course URL
-  const COURSE_URL = "https://afran.academy/course/ذهن-وراج";
+  // PDF handlers
+  const handleDownloadPdf = async () => {
+    const el = document.getElementById("compare-pdf-root");
+    if (!el) {
+      toast.error("خطا در تولید PDF: محتوا یافت نشد");
+      return;
+    }
+
+    setIsGeneratingPdf(true);
+    try {
+      const filename = generateComparePdfFilename(nameA, nameB);
+      const blob = await generatePdfBlobFromElement(el, {
+        fileBaseName: filename.replace(".pdf", ""),
+        mode: "compare",
+        title: "ذهن ما کنار هم",
+      });
+
+      downloadPdf(blob, filename);
+      
+      await trackShareEvent({
+        cardType: "compare_minds",
+        action: "download_pdf",
+        compareSessionId: session?.id ?? null,
+        inviteToken: token ?? null,
+      });
+
+      toast.success("PDF دانلود شد");
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.error("[CompareResultPage] ❌ Error generating PDF:", error);
+        console.error("[CompareResultPage] Error details:", {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      toast.error(`خطا در تولید PDF: ${errorMessage}`);
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
+  const handleSharePdf = async () => {
+    const el = document.getElementById("compare-pdf-root");
+    if (!el) {
+      toast.error("خطا در تولید PDF: محتوا یافت نشد");
+      return;
+    }
+
+    setIsGeneratingPdf(true);
+    try {
+      const filename = generateComparePdfFilename(nameA, nameB);
+      const blob = await generatePdfBlobFromElement(el, {
+        fileBaseName: filename.replace(".pdf", ""),
+        mode: "compare",
+        title: "ذهن ما کنار هم",
+      });
+
+      const result = await sharePdf(blob, filename, {
+        title: "ذهن ما کنار هم",
+        text: buildShareText(),
+      });
+
+      if (result.method === "share" && result.success) {
+        await trackShareEvent({
+          cardType: "compare_minds",
+          action: "share_pdf",
+          compareSessionId: session?.id ?? null,
+          inviteToken: token ?? null,
+        });
+        toast.success("PDF به اشتراک گذاشته شد");
+      } else if (result.method === "download") {
+        await trackShareEvent({
+          cardType: "compare_minds",
+          action: "download_pdf",
+          compareSessionId: session?.id ?? null,
+          inviteToken: token ?? null,
+        });
+        toast.info("مرورگر شما اشتراک‌گذاری مستقیم PDF را پشتیبانی نمی‌کند؛ فایل دانلود شد.");
+      } else {
+        toast.error("خطا در اشتراک‌گذاری PDF");
+      }
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.error("[CompareResultPage] ❌ Error sharing PDF:", error);
+        console.error("[CompareResultPage] Error details:", {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      toast.error(`خطا در تولید PDF: ${errorMessage}`);
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
+  // Course URL - from single source of truth
+  const COURSE_URL = LINKS.MIND_CHATTER_COURSE;
 
   // #region agent log - Safety: Log state branch
-  console.log("[CompareResultPage] 📊 State branch: STATE_B_COMPLETED", {
-    hasSession: !!session,
-    hasAttemptA: !!attemptA,
-    hasAttemptB: !!attemptB,
-    hasComparison: !!comparison,
-    nameA,
-    nameB,
-  });
+  if (import.meta.env.DEV) {
+    console.log("[CompareResultPage] 📊 State branch: STATE_B_COMPLETED", {
+      hasSession: !!session,
+      hasAttemptA: !!attemptA,
+      hasAttemptB: !!attemptB,
+      hasComparison: !!comparison,
+      nameA,
+      nameB,
+    });
+  }
   // #endregion
 
   return (
     <div className="min-h-screen p-4 py-8 bg-gradient-to-b from-background to-background/50">
-      <div className="max-w-4xl mx-auto space-y-8">
+      <div id="compare-pdf-root" className="max-w-4xl mx-auto space-y-8" ref={compareContentRef}>
         {/* STATE C: Expired link note (if applicable) */}
         {isExpired && (
           <Card className="bg-orange-500/10 backdrop-blur-2xl border-orange-500/20">
-            <CardContent className="pt-6 text-center">
-              <p className="text-sm text-foreground/80 leading-relaxed">
-                این لینک منقضی شده، اما نتیجه برای مشاهده ذخیره شده است.
+            <CardContent className="pt-6 text-center space-y-4">
+              <p className="text-sm text-foreground/80 leading-relaxed font-medium">
+                این لینک منقضی شده است
+              </p>
+              <p className="text-xs text-foreground/70 leading-relaxed">
+                برای ساخت لینک جدید، از صفحه نتیجه آزمون خود استفاده کنید
               </p>
             </CardContent>
           </Card>
@@ -2293,6 +2541,44 @@ export default function CompareResultPage() {
           );
         })()}
 
+        {/* CTA Section - Enhanced Prominent Course CTA */}
+        <Card className="bg-gradient-to-br from-green-500/25 via-green-500/20 to-green-500/15 backdrop-blur-2xl border-2 border-green-500/40 shadow-2xl shadow-green-500/20">
+          <CardHeader className="text-center pb-3">
+            <div className="flex items-center justify-center gap-3 mb-3">
+              <BookOpen className="w-7 h-7 sm:w-8 sm:h-8 text-green-400" />
+              <CardTitle className="text-2xl sm:text-3xl text-foreground font-bold">
+                دوره ذهن‌وراج
+              </CardTitle>
+            </div>
+            <div className="inline-flex items-center justify-center px-5 py-2 rounded-full bg-green-500/30 border-2 border-green-500/50 text-green-200 text-sm sm:text-base font-bold shadow-lg">
+              پیشنهاد اختصاصی برای شما
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6 pt-4">
+            {/* Enhanced Reason Why */}
+            <div className="space-y-3">
+              <h3 className="text-lg sm:text-xl text-foreground font-semibold text-center">
+                چرا دوره ذهن‌وراج؟
+              </h3>
+              <p className="text-base sm:text-lg text-foreground/95 leading-relaxed text-center px-3 font-medium">
+                این کارت فقط الگوها رو نشان می‌دهد. اگر دوست داری مهارت «توقف نشخوار» و «خارج شدن از چرخه فکر» را مرحله‌به‌مرحله یاد بگیری، دوره ذهن‌وراج دقیقاً برای همین طراحی شده.
+              </p>
+            </div>
+            
+            {/* Enhanced Action Button */}
+            <div className="flex justify-center pt-2">
+              <Button
+                onClick={() => window.open(COURSE_URL, "_blank")}
+                className="w-full sm:w-auto rounded-xl min-h-[60px] px-10 text-lg font-bold bg-green-500 hover:bg-green-400 border-2 border-green-400/50 shadow-xl shadow-green-500/30 transition-all hover:scale-105"
+                size="lg"
+              >
+                <BookOpen className="w-6 h-6 ml-2" />
+                مشاهده و تهیه دوره ذهن‌وراج
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* SECTION 7: MISUNDERSTANDING LOOP */}
         {(() => {
           const maxDelta = largestDiff?.delta || 0;
@@ -2524,57 +2810,62 @@ export default function CompareResultPage() {
           </CardContent>
         </Card>
 
-        {/* Share & Copy Section */}
+        {/* Share & PDF Section */}
         <Card className="bg-white/5 backdrop-blur-2xl border-white/10">
           <CardContent className="pt-6">
-            <div className="flex flex-col sm:flex-row gap-3">
-            <Button
+            <div className="space-y-3">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button
+                  onClick={handleDownloadPdf}
+                  disabled={isGeneratingPdf}
+                  variant="outline"
+                  className="flex-1 rounded-xl min-h-[44px] bg-white/10 border-white/20"
+                  data-pdf-ignore="true"
+                >
+                  {isGeneratingPdf ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 ml-2 animate-spin" />
+                      در حال تولید...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4 ml-2" />
+                      دانلود PDF
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={handleSharePdf}
+                  disabled={isGeneratingPdf}
+                  className="flex-1 rounded-xl min-h-[44px] bg-primary/80 hover:bg-primary border-primary/40"
+                  data-pdf-ignore="true"
+                >
+                  {isGeneratingPdf ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 ml-2 animate-spin" />
+                      در حال تولید...
+                    </>
+                  ) : (
+                    <>
+                      <Share2 className="w-4 h-4 ml-2" />
+                      اشتراک‌گذاری PDF
+                    </>
+                  )}
+                </Button>
+              </div>
+              <Button
                 onClick={handleCopyLink}
-              variant="outline"
-              className="flex-1 rounded-xl min-h-[44px] bg-white/10 border-white/20"
-            >
+                variant="outline"
+                className="w-full rounded-xl min-h-[44px] bg-white/5 border-white/10 text-sm"
+                data-pdf-ignore="true"
+              >
                 <LinkIcon className="w-4 h-4 ml-2" />
                 کپی لینک مقایسه
-            </Button>
-            <Button
-                onClick={handleCopyShareText}
-              variant="outline"
-              className="flex-1 rounded-xl min-h-[44px] bg-white/10 border-white/20"
-            >
-              <Copy className="w-4 h-4 ml-2" />
-                اشتراک متن آماده
-            </Button>
+              </Button>
             </div>
           </CardContent>
         </Card>
 
-        {/* Soft CTA Section (only if at least one dimension is MEDIUM or HIGH) */}
-        {showCTA ? (
-          <Card className="bg-primary/10 backdrop-blur-2xl border-primary/20 shadow-xl">
-            <CardContent className="pt-6 space-y-4">
-              <p className="text-sm text-foreground/90 leading-relaxed text-center">
-                اگر حس می‌کنی ذهنت زیاد درگیر می‌شود،
-                <br />
-                دوره‌ی ذهن وراج دقیقاً برای همین الگو طراحی شده…
-              </p>
-            <Button
-                onClick={() => window.open(COURSE_URL, "_blank")}
-              variant="outline"
-                className="w-full rounded-xl min-h-[48px] bg-primary/20 border-primary/30 hover:bg-primary/30"
-            >
-                دیدن دوره
-            </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          <Card className="bg-white/5 backdrop-blur-2xl border-white/10">
-            <CardContent className="pt-6">
-              <p className="text-sm text-foreground/70 leading-relaxed text-center">
-                اگر دوست داشتید، می‌توانید درباره‌ی الگوهای ذهنی بیشتر بدانید.
-              </p>
-            </CardContent>
-          </Card>
-        )}
 
 
         {/* Dev Panel - Enhanced diagnostics */}
