@@ -1,5 +1,5 @@
 import { buildMindPatternItems, type MindPatternItem } from "./buildMindPattern";
-import { INVITE_LINK_TEXT, INVITE_LINK_URL } from "@/utils/pdfExport";
+import { INVITE_LINK_TEXT, INVITE_LINK_URL } from "@/utils/pdfConstants";
 
 export function buildMindPatternShareText(
   items: MindPatternItem[],

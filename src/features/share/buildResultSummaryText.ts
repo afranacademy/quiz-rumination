@@ -7,7 +7,7 @@ export type ResultSummaryInput = {
   url?: string;
 };
 
-import { INVITE_LINK_TEXT, INVITE_LINK_URL } from "@/utils/pdfExport";
+import { INVITE_LINK_TEXT, INVITE_LINK_URL } from "@/utils/pdfConstants";
 
 export function buildResultSummaryText(input: ResultSummaryInput): string {
   const { firstName, levelLabel, score, maxScore, quizTitle, url } = input;

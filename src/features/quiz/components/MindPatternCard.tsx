@@ -12,11 +12,12 @@ import { shareOrCopyText } from "@/features/share/shareClient";
 import { buildMindPatternShareText } from "@/features/mindPattern/buildMindPatternShareText";
 import { buildMindPatternItems } from "@/features/mindPattern/buildMindPattern";
 import {
-  generatePdfBlobFromElement,
+  generatePdfBlob,
   downloadPdf,
   sharePdf,
   generateResultPdfFilename,
-} from "@/utils/pdfExport";
+} from "@/utils/pdfGenerator";
+import { ResultPdfDocument } from "@/pdf/ResultPdfDocument";
 import { toast } from "sonner";
 
 interface MindPatternCardProps {
@@ -185,21 +186,39 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
   };
 
   const handleDownloadPdf = async () => {
-    const el = document.getElementById("mental-pattern-pdf-root");
-    if (!el) {
-      toast.error("خطا در تولید PDF: محتوا یافت نشد");
+    if (!answers) {
+      toast.error("خطا در تولید PDF: اطلاعات کافی موجود نیست");
       return;
     }
 
     setIsGeneratingPdf(true);
     try {
       const filename = generateResultPdfFilename();
-      const blob = await generatePdfBlobFromElement(el, {
-        fileBaseName: filename.replace(".pdf", ""),
-        mode: "pattern",
-        title: "الگوی ذهنی من",
+      
+      // Generate items from answers using MENTAL_PATTERN_COPY
+      const items = Array.from({ length: 12 }, (_, i) => {
+        const score = Number(answers[i] ?? 0);
+        const safeScore = Number.isFinite(score) ? Math.min(4, Math.max(0, score)) : 0;
+        const text = MENTAL_PATTERN_COPY[i]?.[safeScore] ?? "";
+        const question = quizDefinition.items.find((item) => item.id === i + 1);
+        const optionLabel = quizDefinition.scale.labels[safeScore] || "";
+        return { 
+          index: i + 1, 
+          text, 
+          questionText: question?.text || "",
+          optionLabel,
+          score: safeScore,
+        };
       });
 
+      const pdfDocument = (
+        <ResultPdfDocument
+          firstName={firstName}
+          items={items}
+        />
+      );
+
+      const blob = await generatePdfBlob(pdfDocument);
       downloadPdf(blob, filename);
       toast.success("PDF دانلود شد");
     } catch (error) {
@@ -218,29 +237,40 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
   };
 
   const handleSharePdf = async () => {
-    const el = document.getElementById("mental-pattern-pdf-root");
-    if (!el || !answers) {
-      toast.error("خطا در تولید PDF: محتوا یافت نشد");
+    if (!answers) {
+      toast.error("خطا در تولید PDF: اطلاعات کافی موجود نیست");
       return;
     }
 
     setIsGeneratingPdf(true);
     try {
-      const items = buildMindPatternItems(answers);
-      const quizUrl = typeof window !== "undefined" ? window.location.origin : "";
-      const shareText = buildMindPatternShareText(items, quizUrl);
       const filename = generateResultPdfFilename();
-
-      const blob = await generatePdfBlobFromElement(el, {
-        fileBaseName: filename.replace(".pdf", ""),
-        mode: "pattern",
-        title: "الگوی ذهنی من",
+      
+      // Generate items from answers using MENTAL_PATTERN_COPY
+      const items = Array.from({ length: 12 }, (_, i) => {
+        const score = Number(answers[i] ?? 0);
+        const safeScore = Number.isFinite(score) ? Math.min(4, Math.max(0, score)) : 0;
+        const text = MENTAL_PATTERN_COPY[i]?.[safeScore] ?? "";
+        const question = quizDefinition.items.find((item) => item.id === i + 1);
+        const optionLabel = quizDefinition.scale.labels[safeScore] || "";
+        return { 
+          index: i + 1, 
+          text, 
+          questionText: question?.text || "",
+          optionLabel,
+          score: safeScore,
+        };
       });
 
-      const result = await sharePdf(blob, filename, {
-        title: "الگوی ذهنی من",
-        text: shareText,
-      });
+      const pdfDocument = (
+        <ResultPdfDocument
+          firstName={firstName}
+          items={items}
+        />
+      );
+
+      const blob = await generatePdfBlob(pdfDocument);
+      const result = await sharePdf(blob, filename);
 
       if (result.method === "share" && result.success) {
         toast.success("PDF به اشتراک گذاشته شد");

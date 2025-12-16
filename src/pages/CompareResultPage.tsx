@@ -7,11 +7,12 @@ import { RefreshCw, Link as LinkIcon, Share2, BookOpen, Download, FileText } fro
 import { toast } from "sonner";
 import { copyText, shareOrCopyText } from "@/features/share/shareClient";
 import {
-  generatePdfBlobFromElement,
+  generatePdfBlob,
   downloadPdf,
   sharePdf,
   generateComparePdfFilename,
-} from "@/utils/pdfExport";
+} from "@/utils/pdfGenerator";
+import { ComparePdfDocument } from "@/pdf/ComparePdfDocument";
 import { computeSimilarity } from "@/features/compare/computeSimilarity";
 import { useAnonAuth } from "@/hooks/useAnonAuth";
 import { trackShareEvent } from "@/lib/trackShareEvent";
@@ -2117,21 +2118,51 @@ export default function CompareResultPage() {
 
   // PDF handlers
   const handleDownloadPdf = async () => {
-    const el = document.getElementById("compare-pdf-root");
-    if (!el) {
-      toast.error("خطا در تولید PDF: محتوا یافت نشد");
+    if (!comparison || !attemptA || !attemptB) {
+      toast.error("خطا در تولید PDF: داده‌های کافی موجود نیست");
       return;
     }
 
     setIsGeneratingPdf(true);
     try {
       const filename = generateComparePdfFilename(nameA, nameB);
-      const blob = await generatePdfBlobFromElement(el, {
-        fileBaseName: filename.replace(".pdf", ""),
-        mode: "compare",
-        title: "ذهن ما کنار هم",
-      });
+      
+      const pdfDocument = (
+        <ComparePdfDocument
+          nameA={nameA}
+          nameB={nameB}
+          comparison={comparison}
+          attemptA={attemptA}
+          attemptB={attemptB}
+          topDimensionA={topDimensionA || undefined}
+          topDimensionB={topDimensionB || undefined}
+          overallSimilarity={overallSimilarity}
+          misunderstandingRisk={misunderstandingRisk}
+          largestDiff={largestDiff || undefined}
+          similarities={similarities}
+          differences={differences}
+          getDimensionNameForSnapshot={getDimensionNameForSnapshot}
+          generateMindSnapshot={generateMindSnapshot}
+          generateCentralInterpretation={generateCentralInterpretation}
+          generateNeutralBlendedInterpretation={generateNeutralBlendedInterpretation}
+          generateMisunderstandingLoop={generateMisunderstandingLoop}
+          getCombinedContextualTriggers={getCombinedContextualTriggers}
+          getSeenUnseenConsequences={getSeenUnseenConsequences}
+          generateEmotionalExperience={generateEmotionalExperience}
+          getConversationStarters={getConversationStarters}
+          getMisunderstandingRiskText={getMisunderstandingRiskText}
+          getSimilarityComplementarySentence={getSimilarityComplementarySentence}
+          getAlignmentLabel={getAlignmentLabel}
+          generateDimensionSummary={generateDimensionSummary}
+          DIMENSION_LABELS={DIMENSION_LABELS}
+          DIMENSION_DEFINITIONS={DIMENSION_DEFINITIONS}
+          LEVEL_LABELS={LEVEL_LABELS}
+          SIMILARITY_LABELS={SIMILARITY_LABELS}
+          SAFETY_STATEMENT={SAFETY_STATEMENT}
+        />
+      );
 
+      const blob = await generatePdfBlob(pdfDocument);
       downloadPdf(blob, filename);
       
       await trackShareEvent({
@@ -2158,25 +2189,52 @@ export default function CompareResultPage() {
   };
 
   const handleSharePdf = async () => {
-    const el = document.getElementById("compare-pdf-root");
-    if (!el) {
-      toast.error("خطا در تولید PDF: محتوا یافت نشد");
+    if (!comparison || !attemptA || !attemptB) {
+      toast.error("خطا در تولید PDF: داده‌های کافی موجود نیست");
       return;
     }
 
     setIsGeneratingPdf(true);
     try {
       const filename = generateComparePdfFilename(nameA, nameB);
-      const blob = await generatePdfBlobFromElement(el, {
-        fileBaseName: filename.replace(".pdf", ""),
-        mode: "compare",
-        title: "ذهن ما کنار هم",
-      });
+      
+      const pdfDocument = (
+        <ComparePdfDocument
+          nameA={nameA}
+          nameB={nameB}
+          comparison={comparison}
+          attemptA={attemptA}
+          attemptB={attemptB}
+          topDimensionA={topDimensionA || undefined}
+          topDimensionB={topDimensionB || undefined}
+          overallSimilarity={overallSimilarity}
+          misunderstandingRisk={misunderstandingRisk}
+          largestDiff={largestDiff || undefined}
+          similarities={similarities}
+          differences={differences}
+          getDimensionNameForSnapshot={getDimensionNameForSnapshot}
+          generateMindSnapshot={generateMindSnapshot}
+          generateCentralInterpretation={generateCentralInterpretation}
+          generateNeutralBlendedInterpretation={generateNeutralBlendedInterpretation}
+          generateMisunderstandingLoop={generateMisunderstandingLoop}
+          getCombinedContextualTriggers={getCombinedContextualTriggers}
+          getSeenUnseenConsequences={getSeenUnseenConsequences}
+          generateEmotionalExperience={generateEmotionalExperience}
+          getConversationStarters={getConversationStarters}
+          getMisunderstandingRiskText={getMisunderstandingRiskText}
+          getSimilarityComplementarySentence={getSimilarityComplementarySentence}
+          getAlignmentLabel={getAlignmentLabel}
+          generateDimensionSummary={generateDimensionSummary}
+          DIMENSION_LABELS={DIMENSION_LABELS}
+          DIMENSION_DEFINITIONS={DIMENSION_DEFINITIONS}
+          LEVEL_LABELS={LEVEL_LABELS}
+          SIMILARITY_LABELS={SIMILARITY_LABELS}
+          SAFETY_STATEMENT={SAFETY_STATEMENT}
+        />
+      );
 
-      const result = await sharePdf(blob, filename, {
-        title: "ذهن ما کنار هم",
-        text: buildShareText(),
-      });
+      const blob = await generatePdfBlob(pdfDocument);
+      const result = await sharePdf(blob, filename);
 
       if (result.method === "share" && result.success) {
         await trackShareEvent({

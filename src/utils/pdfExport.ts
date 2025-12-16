@@ -1,3 +1,41 @@
+/**
+ * @deprecated This file contains legacy html2canvas/jsPDF PDF export utilities.
+ * 
+ * DO NOT USE IN PRODUCTION. All PDF generation should use @react-pdf/renderer
+ * via src/pdf/buildPdf.ts and src/utils/pdfGenerator.ts.
+ * 
+ * This file is kept only for:
+ * - DEV debugging purposes (guarded by import.meta.env.DEV)
+ * - Reference of legacy implementation
+ * 
+ * If you need PDF constants, import from src/utils/pdfConstants.ts instead.
+ */
+
+// Re-export constants for backward compatibility (will be removed in future)
+export { INVITE_LINK_TEXT, INVITE_LINK_URL } from "./pdfConstants";
+
+// Production guard: prevent legacy export functions from being called in production
+function guardProductionUsage(functionName: string): void {
+  if (!import.meta.env.DEV) {
+    // In production: do nothing, log minimal error
+    console.error(
+      `[pdfExport] Legacy PDF export function '${functionName}' called in production. This is not allowed.`
+    );
+    return;
+  }
+  // In DEV: throw clear error
+  throw new Error(
+    `[pdfExport] Legacy PDF export function '${functionName}' should not be used. ` +
+    `Use @react-pdf/renderer via src/pdf/buildPdf.ts instead. ` +
+    `This function is only available for DEV debugging.`
+  );
+}
+
+// Import constants for internal use
+import { INVITE_LINK_TEXT, INVITE_LINK_URL } from "./pdfConstants";
+
+// Legacy dependencies - these will be tree-shaken in production if functions are never called
+// The production guard in generatePdfBlobFromElement prevents execution
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 
@@ -19,12 +57,6 @@ function sanitizeFilename(name: string | null | undefined): string {
 const A4_WIDTH_PX = 794; // 210mm * 96dpi / 25.4mm
 const A4_HEIGHT_PX = 1123; // 297mm * 96dpi / 25.4mm
 const A4_PADDING_PX = 24; // ~6mm padding
-
-/**
- * Invite link text and URL (consistent across all outputs)
- */
-export const INVITE_LINK_TEXT = "اگر دوست داری الگوی ذهنی خودت رو دقیق‌تر بشناسی،\nمی‌تونی این آزمون سنجش نشخوار فکری رو تکمیل کنی:";
-export const INVITE_LINK_URL = "https://zaya.io/testruminationnewtest";
 
 /**
  * Properties to inline from computed styles
@@ -279,7 +311,10 @@ function addInviteLinkFooter(clone: HTMLElement): void {
 }
 
 /**
- * Generates PDF blob from element using html2canvas with OKLCH-safe approach
+ * @deprecated Legacy PDF export using html2canvas/jsPDF.
+ * DO NOT USE IN PRODUCTION. Use @react-pdf/renderer via src/pdf/buildPdf.ts instead.
+ * 
+ * This function is only available in DEV mode for debugging.
  */
 export async function generatePdfBlobFromElement(
   element: HTMLElement,
@@ -289,6 +324,12 @@ export async function generatePdfBlobFromElement(
   title?: string;
   }
 ): Promise<Blob> {
+  // Production guard
+  if (!import.meta.env.DEV) {
+    guardProductionUsage("generatePdfBlobFromElement");
+    throw new Error("Legacy PDF export is not available in production");
+  }
+
   const { fileBaseName, mode, title } = opts;
 
   // Validate element
@@ -324,10 +365,10 @@ export async function generatePdfBlobFromElement(
     // CRITICAL: Use windowStyles: false to prevent html2canvas from parsing document stylesheets
     // This completely bypasses OKLCH/OKLAB parsing since html2canvas won't read stylesheets
     const canvas = await html2canvas(clone, {
-      scale: 2,
+    scale: 2,
       backgroundColor: "#ffffff",
-      useCORS: true,
-      logging: import.meta.env.DEV,
+    useCORS: true,
+    logging: import.meta.env.DEV,
       allowTaint: false,
       foreignObjectRendering: false,
       width: clone.scrollWidth,
@@ -380,7 +421,7 @@ export async function generatePdfBlobFromElement(
           }
         });
       },
-    });
+  });
 
   if (import.meta.env.DEV) {
     console.log("[pdfExport] Canvas captured:", {
@@ -524,7 +565,10 @@ function generatePdfFromCanvas(
 }
 
 /**
- * Downloads a PDF blob
+ * @deprecated Legacy PDF download utility.
+ * Use downloadPdf from src/utils/pdfGenerator.ts instead (works with react-pdf).
+ * 
+ * This function is kept for backward compatibility but should not be used for new code.
  */
 export function downloadPdf(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -541,8 +585,10 @@ export function downloadPdf(blob: Blob, filename: string): void {
 }
 
 /**
- * Shares a PDF file if supported, otherwise downloads it
- * Returns method used and success status
+ * @deprecated Legacy PDF share utility.
+ * Use sharePdf from src/utils/pdfGenerator.ts instead (works with react-pdf).
+ * 
+ * This function is kept for backward compatibility but should not be used for new code.
  */
 export async function sharePdf(
   blob: Blob,
@@ -553,20 +599,20 @@ export async function sharePdf(
   if (typeof navigator.share !== "undefined") {
     try {
       const file = new File([blob], filename, { type: "application/pdf" });
-
+      
       // First check if we can share files (more reliable check)
       if (navigator.canShare) {
         const canShareFiles = navigator.canShare({ files: [file] });
         if (canShareFiles) {
-          await navigator.share({
-            files: [file],
-          });
-
-          if (import.meta.env.DEV) {
-            console.log("[pdfExport] PDF shared successfully");
-          }
-
-          return { method: "share", success: true };
+        await navigator.share({
+          files: [file],
+        });
+        
+        if (import.meta.env.DEV) {
+          console.log("[pdfExport] PDF shared successfully");
+        }
+        
+        return { method: "share", success: true };
         } else {
           // canShare returned false - file sharing not supported
           if (import.meta.env.DEV) {
@@ -615,7 +661,7 @@ export async function sharePdf(
       if (error instanceof Error && error.name === "AbortError") {
         return { method: "share", success: false, error: "canceled" };
       }
-
+      
       if (import.meta.env.DEV) {
         console.warn("[pdfExport] Share failed, falling back to download:", error);
       }
@@ -628,7 +674,8 @@ export async function sharePdf(
 }
 
 /**
- * Generates filename for compare PDF
+ * @deprecated Legacy filename generator.
+ * Use generateComparePdfFilename from src/utils/pdfGenerator.ts instead.
  */
 export function generateComparePdfFilename(
   nameA: string | null,
@@ -641,7 +688,8 @@ export function generateComparePdfFilename(
 }
 
 /**
- * Generates filename for result PDF
+ * @deprecated Legacy filename generator.
+ * Use generateResultPdfFilename from src/utils/pdfGenerator.ts instead.
  */
 export function generateResultPdfFilename(): string {
   const date = new Date().toISOString().split("T")[0];

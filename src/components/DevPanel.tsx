@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { MyMindPatternPdf } from "@/pdf/templates/MyMindPatternPdf";
+import { buildAndDownloadPdf } from "@/pdf/buildPdf";
 
 interface DevPanelProps {
   attemptId: string | null;
@@ -12,6 +14,7 @@ export function DevPanel({ attemptId, participantId, finalizationStatus, complet
   const [attemptData, setAttemptData] = useState<any>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastOperation, setLastOperation] = useState<string | null>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   // Use completedAttemptData if provided (from update response), otherwise fetch
   useEffect(() => {
@@ -107,6 +110,31 @@ export function DevPanel({ attemptId, participantId, finalizationStatus, complet
         {lastError && (
           <div className="text-red-400 mt-2 break-words">Error: {lastError}</div>
         )}
+      </div>
+      
+      {/* DEV-ONLY: PDF v2 Test Button */}
+      <div className="mt-4 pt-4 border-t border-white/20">
+        <button
+          onClick={async () => {
+            setIsGeneratingPdf(true);
+            try {
+              const pdfDoc = <MyMindPatternPdf firstName="تست" />;
+              await buildAndDownloadPdf(pdfDoc, "my-mind-pattern.pdf");
+              setLastOperation("PDF v2 generated and downloaded");
+              setLastError(null);
+            } catch (error) {
+              const errorMsg = error instanceof Error ? error.message : String(error);
+              setLastError(`PDF v2 Error: ${errorMsg}`);
+              console.error("[DevPanel] PDF v2 generation error:", error);
+            } finally {
+              setIsGeneratingPdf(false);
+            }
+          }}
+          disabled={isGeneratingPdf}
+          className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-xs rounded font-mono"
+        >
+          {isGeneratingPdf ? "Generating PDF v2..." : "Test PDF v2 (My Mind Pattern)"}
+        </button>
       </div>
     </div>
   );
