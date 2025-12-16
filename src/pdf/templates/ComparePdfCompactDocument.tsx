@@ -9,9 +9,8 @@ import {
 } from "@react-pdf/renderer";
 import type { Comparison } from "@/domain/compare/types";
 import type { DimensionKey } from "@/domain/quiz/types";
-import { PDF_RTL } from "../theme/rtl";
-import { ITEM_MIN_PRESENCE } from "./theme/pagination";
-import { PdfCtaLink } from "./components/PdfCtaLink";
+import { ITEM_MIN_PRESENCE } from "../theme/pagination";
+import { PdfCtaLink } from "../components/PdfCtaLink";
 import { formatPersianDate } from "@/utils/formatPersianDate";
 
 // AFRAN Brand Colors (HEX only) - Corporate Report Style
@@ -21,20 +20,27 @@ const COLORS = {
   primaryLighter: "#ADE8F4",
   primaryLightest: "#CAF0F8",
   primaryDark: "#0077B6",
-  primaryDarkest: "#023E8A", // Dark navy for covers
-  text: "#023E8A", // Dark navy text
+  primaryDarkest: "#023E8A",
+  text: "#023E8A",
   textLight: "#4A5568",
   textLighter: "#718096",
   border: "#E2E8F0",
   background: "#FFFFFF",
-  coverBg: "#023E8A", // Dark navy cover
-  coverText: "#FFFFFF", // White text on cover
+  coverBg: "#023E8A",
+  coverText: "#FFFFFF",
   green: "#10B981",
   orange: "#F59E0B",
   red: "#EF4444",
 };
 
 const fontFamily = "Peyda";
+
+// Alignment badge background colors (explicit, no alpha concatenation)
+const ALIGN_BG = {
+  aligned: "#D1FAE5",
+  different: "#FEF3C7",
+  veryDifferent: "#FEE2E2",
+};
 
 const styles = StyleSheet.create({
   // Cover page styles
@@ -49,9 +55,8 @@ const styles = StyleSheet.create({
     flexDirection: "column" as const,
     justifyContent: "center" as const,
     alignItems: "center" as const,
-    paddingVertical: 56, // Reduced from 80 for tighter cover layout
+    paddingVertical: 56,
     paddingHorizontal: 60,
-    // Removed minHeight: "100%" - let content determine height naturally
   },
   coverLogo: {
     width: 64,
@@ -106,13 +111,13 @@ const styles = StyleSheet.create({
   page: {
     flexDirection: "column",
     backgroundColor: COLORS.background,
-    padding: 36, // Reduced from 50 for denser content pages
+    padding: 36,
     fontFamily: fontFamily,
     direction: "rtl",
   },
   header: {
-    marginBottom: 16,
-    paddingBottom: 12,
+    marginBottom: 12,
+    paddingBottom: 8,
     borderBottom: `2px solid ${COLORS.primaryDarkest}`,
   },
   headerTitle: {
@@ -129,34 +134,35 @@ const styles = StyleSheet.create({
     lineHeight: 1.6,
   },
   section: {
-    marginBottom: 12,
+    marginBottom: 10,
   },
   sectionTitle: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: "bold" as const,
     color: COLORS.primaryDarkest,
-    marginBottom: 12,
+    marginBottom: 8,
     textAlign: "right" as const,
-    paddingBottom: 8,
+    paddingBottom: 6,
     borderBottom: `1px solid ${COLORS.border}`,
   },
   sectionSubtitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "bold" as const,
     color: COLORS.text,
-    marginBottom: 8,
+    marginBottom: 6,
     textAlign: "right" as const,
   },
   card: {
     backgroundColor: COLORS.background,
     border: `1px solid ${COLORS.border}`,
     borderRadius: 4,
-    padding: 16,
-    marginBottom: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginBottom: 8,
   },
   sectionTitleWrapper: {
     marginBottom: 8,
-    paddingBottom: 8,
+    paddingBottom: 6,
     borderBottom: `1px solid ${COLORS.border}`,
   },
   cardHighlight: {
@@ -168,14 +174,14 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     lineHeight: 1.7,
     textAlign: "right" as const,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   textSmall: {
     fontSize: 10,
     color: COLORS.textLight,
     lineHeight: 1.6,
     textAlign: "right" as const,
-    marginBottom: 6,
+    marginBottom: 4,
   },
   textCenter: {
     fontSize: 12,
@@ -185,12 +191,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   chip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 4,
     fontSize: 10,
-    marginHorizontal: 6,
-    marginVertical: 4,
+    marginHorizontal: 4,
+    marginVertical: 3,
     fontWeight: "bold",
   },
   chipPrimary: {
@@ -207,26 +213,15 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   col: {
-    width: "48%", // Fixed width instead of flex: 1
-    paddingHorizontal: 8,
+    width: "48%",
+    paddingHorizontal: 6,
   },
   colSpacer: {
-    width: 12, // Fixed spacer between columns
+    width: 12,
   },
   divider: {
     borderTop: `1px solid ${COLORS.border}`,
     marginVertical: 8,
-  },
-  footer: {
-    position: "absolute",
-    bottom: 30,
-    left: 50,
-    right: 50,
-    paddingTop: 16,
-    borderTop: `1px solid ${COLORS.border}`,
-    fontSize: 9,
-    color: COLORS.textLighter,
-    textAlign: "center",
   },
   listItem: {
     flexDirection: "row-reverse" as const,
@@ -252,23 +247,13 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: "right" as const,
   },
-  inviteLink: {
-    marginTop: 16, // Reduced from 32 for denser content
-    paddingTop: 16, // Reduced from 20
-    borderTop: `2px solid ${COLORS.border}`,
-  },
-  inviteText: {
-    fontSize: 11,
-    color: COLORS.textLight,
-    lineHeight: 1.7,
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  inviteUrl: {
-    fontSize: 10,
-    color: COLORS.primaryDark,
-    textAlign: "center",
-    textDecoration: "underline",
+  conversationStarterItem: {
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 6,
+    backgroundColor: COLORS.background,
   },
   pageNumber: {
     position: "absolute",
@@ -279,9 +264,15 @@ const styles = StyleSheet.create({
     color: COLORS.textLighter,
     textAlign: "center",
   },
+  footerText: {
+    marginTop: 8,
+    fontSize: 8,
+    color: COLORS.textLighter,
+    textAlign: "center",
+  },
 });
 
-interface ComparePdfDocumentProps {
+interface ComparePdfCompactDocumentProps {
   nameA: string;
   nameB: string;
   comparison: Comparison;
@@ -307,46 +298,6 @@ interface ComparePdfDocumentProps {
     dimension: DimensionKey,
     scores: Record<DimensionKey, number>
   ) => string;
-  generateCentralInterpretation: (
-    dimension: DimensionKey,
-    nameA: string,
-    nameB: string,
-    aLevel: "low" | "medium" | "high",
-    bLevel: "low" | "medium" | "high",
-    aScore: number,
-    bScore: number,
-    relation: "similar" | "different" | "very_different",
-    direction: "a_higher" | "b_higher" | "equal"
-  ) => string;
-  generateNeutralBlendedInterpretation: () => string;
-  generateMisunderstandingLoop: (
-    dimension: DimensionKey,
-    relation: "similar" | "different" | "very_different"
-  ) => string[];
-  getCombinedContextualTriggers: (
-    dimension: DimensionKey,
-    topDimensionB?: DimensionKey
-  ) => string[];
-  getSeenUnseenConsequences: (dimension: DimensionKey) => {
-    unseen: string[];
-    seen: string[];
-  };
-  generateEmotionalExperience: (
-    dimension: DimensionKey,
-    nameA: string,
-    nameB: string,
-    aLevel: "low" | "medium" | "high",
-    bLevel: "low" | "medium" | "high",
-    relation: "similar" | "different" | "very_different"
-  ) => {
-    shared?: string;
-    forA: string;
-    forB: string;
-  };
-  getConversationStarters: (
-    dimension: DimensionKey,
-    relation: "similar" | "different" | "very_different"
-  ) => string[];
   getMisunderstandingRiskText: (risk: "low" | "medium" | "high") => string;
   getSimilarityComplementarySentence: (
     similarity: "low" | "medium" | "high"
@@ -357,15 +308,21 @@ interface ComparePdfDocumentProps {
     aLevel: "low" | "medium" | "high",
     bLevel: "low" | "medium" | "high"
   ) => string;
+  getConversationStarters: (
+    dimension: DimensionKey,
+    relation: "similar" | "different" | "very_different"
+  ) => string[];
   DIMENSION_LABELS: Record<DimensionKey, string>;
   DIMENSION_DEFINITIONS: Record<DimensionKey, string>;
   LEVEL_LABELS: Record<"low" | "medium" | "high", string>;
   SIMILARITY_LABELS: Record<"low" | "medium" | "high", string>;
-  SAFETY_STATEMENT: string;
+  SAFETY_STATEMENT?: string;
   now?: Date;
 }
 
-export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
+export const ComparePdfCompactDocument: React.FC<
+  ComparePdfCompactDocumentProps
+> = ({
   nameA,
   nameB,
   comparison,
@@ -380,17 +337,11 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
   differences,
   getDimensionNameForSnapshot,
   generateMindSnapshot,
-  generateCentralInterpretation,
-  generateNeutralBlendedInterpretation,
-  generateMisunderstandingLoop,
-  getCombinedContextualTriggers,
-  getSeenUnseenConsequences,
-  generateEmotionalExperience,
-  getConversationStarters,
   getMisunderstandingRiskText,
   getSimilarityComplementarySentence,
   getAlignmentLabel,
   generateDimensionSummary,
+  getConversationStarters,
   DIMENSION_LABELS,
   DIMENSION_DEFINITIONS,
   LEVEL_LABELS,
@@ -412,9 +363,16 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
     "interpersonal",
   ];
 
+  // Get dimension for conversation starters (use largest diff or first similarity)
+  const dimensionForStarters =
+    largestDiff?.key || similarities[0] || dimensionKeys[0];
+  const dimForStarters = comparison?.dimensions?.[dimensionForStarters];
+  const relationForStarters =
+    dimForStarters?.relation || "similar";
+
   return (
     <Document>
-      {/* Cover Page - Corporate Report Style */}
+      {/* Cover Page */}
       <Page size="A4" style={styles.coverPage}>
         <View style={styles.coverContent}>
           <Image
@@ -438,7 +396,7 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
         </View>
       </Page>
 
-      {/* Content Page 1: Overview */}
+      {/* Page 1: Overview */}
       <Page size="A4" style={styles.page}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>ذهن ما کنار هم</Text>
@@ -454,7 +412,7 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
               style={{
                 flexDirection: "row-reverse" as const,
                 flexWrap: "wrap" as const,
-                marginBottom: 16,
+                marginBottom: 12,
                 justifyContent: "center" as const,
               }}
             >
@@ -522,11 +480,10 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
           </View>
         )}
 
-        {/* CTA removed from page 1 - will appear only at end */}
         <Text style={styles.pageNumber}>1</Text>
       </Page>
 
-      {/* Content Page 2: Dimension Map */}
+      {/* Page 2: Dimension Map + Similarities/Differences + CTA */}
       <Page size="A4" style={styles.page}>
         <View wrap={false} style={styles.sectionTitleWrapper}>
           <Text style={styles.sectionTitle}>نقشه‌ی ذهنی</Text>
@@ -542,14 +499,18 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
             ? "نامشخص"
             : getAlignmentLabel(dim.delta ?? 0);
 
+          // Determine background color for alignment badge
+          const badgeBgColor =
+            alignment === "همسو"
+              ? ALIGN_BG.aligned
+              : alignment === "متفاوت"
+              ? ALIGN_BG.different
+              : ALIGN_BG.veryDifferent;
+
           return (
-            <View
-              key={key}
-              wrap={false}
-              minPresenceAhead={ITEM_MIN_PRESENCE}
-              style={styles.card}
-            >
-              <View style={styles.row}>
+            <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} key={key} style={styles.card}>
+              {/* Header row - keep together */}
+              <View wrap={false} style={styles.row}>
                 <Text style={styles.sectionSubtitle}>
                   {DIMENSION_LABELS[key]}
                 </Text>
@@ -557,14 +518,9 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
                   style={[
                     styles.textSmall,
                     {
-                      backgroundColor:
-                        alignment === "همسو"
-                          ? COLORS.green + "20"
-                          : alignment === "متفاوت"
-                          ? COLORS.orange + "20"
-                          : COLORS.red + "20",
-                      paddingHorizontal: 12,
-                      paddingVertical: 4,
+                      backgroundColor: badgeBgColor,
+                      paddingHorizontal: 8,
+                      paddingVertical: 2,
                       borderRadius: 4,
                       fontWeight: "bold" as const,
                     },
@@ -653,227 +609,35 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
           </View>
         </View>
 
+        {/* Conversation Starters - Simple list, not nested cards */}
+        <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.section}>
+          <View wrap={false} style={styles.sectionTitleWrapper}>
+            <Text style={styles.sectionTitle}>شروع گفت‌وگو</Text>
+          </View>
+          {getConversationStarters(
+            dimensionForStarters,
+            relationForStarters
+          ).map((q, idx) => (
+            <View wrap={false} minPresenceAhead={60} key={idx} style={styles.conversationStarterItem}>
+              <Text style={styles.textSmall}>{q}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Safety Statement (if provided and space allows) */}
+        {SAFETY_STATEMENT && (
+          <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.section}>
+            <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={[styles.card, { backgroundColor: COLORS.primaryLightest }]}>
+              <Text style={styles.textSmall}>{SAFETY_STATEMENT}</Text>
+            </View>
+          </View>
+        )}
+
+        {/* CTA/Invite Link - Only at end, separated from content */}
+        <PdfCtaLink />
         <Text style={styles.pageNumber}>2</Text>
       </Page>
-
-      {/* Additional pages for detailed content */}
-      {(() => {
-        const maxDelta = largestDiff?.delta || 0;
-        const dimensionToUse =
-          maxDelta < 0.8
-            ? similarities[0] || dimensionKeys[0]
-            : largestDiff?.key || dimensionKeys[0];
-        if (!dimensionToUse) return null;
-
-        const dim = comparison?.dimensions?.[dimensionToUse];
-        if (!dim) return null;
-
-        const relation =
-          maxDelta < 0.8
-            ? "similar"
-            : (comparison?.dimensions?.[dimensionToUse]?.relation ??
-                "similar");
-
-        return (
-          <>
-            {/* Central Interpretation Page */}
-            <Page size="A4" style={styles.page}>
-              <View wrap={false} style={styles.sectionTitleWrapper}>
-                <Text style={styles.sectionTitle}>تفسیر مرکزی</Text>
-              </View>
-              <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={[styles.card, styles.cardHighlight]}>
-                <Text style={styles.text}>
-                  {maxDelta < 0.8
-                    ? generateNeutralBlendedInterpretation()
-                    : generateCentralInterpretation(
-                        dimensionToUse,
-                        nameA,
-                        nameB,
-                        dim.aLevel,
-                        dim.bLevel,
-                        dim.aScore,
-                        dim.bScore,
-                        relation,
-                        dim.direction
-                      )}
-                </Text>
-              </View>
-
-              {/* Misunderstanding Loop */}
-              <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.section}>
-                <View wrap={false} style={styles.sectionTitleWrapper}>
-                  <Text style={styles.sectionTitle}>
-                    {relation === "similar"
-                      ? "وقتی این همسویی فعال می‌شود، معمولاً این چرخه شکل می‌گیرد:"
-                      : "وقتی این تفاوت فعال می‌شود، معمولاً این چرخه شکل می‌گیرد:"}
-                  </Text>
-                </View>
-                <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
-                  {generateMisunderstandingLoop(dimensionToUse, relation).map(
-                    (step, index) => (
-                      <View key={index} style={styles.listItem}>
-                        <Text style={[styles.bullet, styles.numberBox]}>{`${index + 1}.`}</Text>
-                        <Text style={[styles.textSmall, styles.listText]}>{step}</Text>
-                      </View>
-                    )
-                  )}
-                </View>
-              </View>
-
-              {/* Triggers */}
-              <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.section}>
-                <View wrap={false} style={styles.sectionTitleWrapper}>
-                  <Text style={styles.sectionTitle}>موقعیت‌های فعال‌ساز</Text>
-                </View>
-                <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
-                  {getCombinedContextualTriggers(
-                    dimensionToUse,
-                    topDimensionB
-                  ).map((trigger, index) => (
-                    <View key={index} style={styles.listItem}>
-                      <Text style={[styles.bullet, styles.bulletBox]}>•</Text>
-                      <Text style={[styles.textSmall, styles.listText]}>{trigger}</Text>
-                    </View>
-                  ))}
-                </View>
-              </View>
-
-              <Text style={styles.pageNumber}>3</Text>
-            </Page>
-
-            {/* Consequences and Emotional Experience Page */}
-            <Page size="A4" style={styles.page}>
-              {/* Consequences */}
-              <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.section}>
-                <View wrap={false} style={styles.sectionTitleWrapper}>
-                  <Text style={styles.sectionTitle}>
-                    پیامد دیده نشدن / دیده شدن
-                  </Text>
-                </View>
-                <View style={styles.row}>
-                  <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={[styles.col, styles.card]}>
-                    <Text
-                      style={[
-                        styles.sectionSubtitle,
-                        { color: COLORS.red, marginBottom: 12 },
-                      ]}
-                    >
-                      اگر دیده نشود
-                    </Text>
-                    {getSeenUnseenConsequences(dimensionToUse).unseen.map(
-                      (item, idx) => (
-                        <View key={idx} style={styles.listItem}>
-                          <Text style={[styles.bullet, styles.bulletBox]}>•</Text>
-                          <Text style={[styles.textSmall, styles.listText]}>{item}</Text>
-                        </View>
-                      )
-                    )}
-                  </View>
-                  <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={[styles.col, styles.card]}>
-                    <Text
-                      style={[
-                        styles.sectionSubtitle,
-                        { color: COLORS.green, marginBottom: 12 },
-                      ]}
-                    >
-                      اگر دیده شود
-                    </Text>
-                    {getSeenUnseenConsequences(dimensionToUse).seen.map(
-                      (item, idx) => (
-                        <View key={idx} style={styles.listItem}>
-                          <Text style={[styles.bullet, styles.bulletBox]}>•</Text>
-                          <Text style={[styles.textSmall, styles.listText]}>{item}</Text>
-                        </View>
-                      )
-                    )}
-                  </View>
-                </View>
-              </View>
-
-              {/* Emotional Experience */}
-              <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.section}>
-                <View wrap={false} style={styles.sectionTitleWrapper}>
-                  <Text style={styles.sectionTitle}>
-                    {relation === "similar"
-                      ? "این همسویی ممکن است این‌طور حس شود"
-                      : "این تفاوت ممکن است این‌طور حس شود"}
-                  </Text>
-                </View>
-                <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
-                  {(() => {
-                    const emotionalExp = generateEmotionalExperience(
-                      dimensionToUse,
-                      nameA,
-                      nameB,
-                      dim.aLevel,
-                      dim.bLevel,
-                      relation
-                    );
-                    return emotionalExp.shared ? (
-                      <Text style={styles.text}>{emotionalExp.shared}</Text>
-                    ) : (
-                      <>
-                        <Text style={styles.text}>
-                          <Text style={{ fontWeight: "bold" }}>{nameA}:</Text>{" "}
-                          {emotionalExp.forA}
-                        </Text>
-                        <View style={styles.divider} />
-                        <Text style={styles.text}>
-                          <Text style={{ fontWeight: "bold" }}>{nameB}:</Text>{" "}
-                          {emotionalExp.forB}
-                        </Text>
-                      </>
-                    );
-                  })()}
-                </View>
-              </View>
-
-              {/* Conversation Starters */}
-              <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.section}>
-                <View wrap={false} style={styles.sectionTitleWrapper}>
-                  <Text style={styles.sectionTitle}>شروع گفت‌وگو</Text>
-                </View>
-                <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
-                  {getConversationStarters(dimensionToUse, relation).map(
-                    (q, idx) => (
-                      <View
-                        wrap={false}
-                        minPresenceAhead={60}
-                        key={idx}
-                        style={[styles.card, { marginBottom: 8, padding: 12 }]}
-                      >
-                        <Text style={styles.textSmall}>{q}</Text>
-                      </View>
-                    )
-                  )}
-                </View>
-              </View>
-
-              {/* Final Summary */}
-              <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.section}>
-                <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
-                  <Text style={styles.textCenter}>
-                    این صفحه قرار نیست چیزی را درست یا غلط کند.{"\n"}
-                    فقط نشان می‌دهد ذهن‌ها چطور متفاوت واکنش نشان می‌دهند.{"\n"}
-                    دیدن این تفاوت‌ها می‌تواند نقطه‌ی شروع فهم باشد، نه بحث.
-                  </Text>
-                </View>
-              </View>
-
-              {/* Safety Statement */}
-              <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.section}>
-                <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={[styles.card, { backgroundColor: COLORS.primaryLightest }]}>
-                  <Text style={styles.textSmall}>{SAFETY_STATEMENT}</Text>
-                </View>
-              </View>
-
-              {/* CTA/Invite Link - Only at end, separated from content */}
-              <PdfCtaLink />
-              <Text style={styles.pageNumber}>4</Text>
-            </Page>
-          </>
-        );
-      })()}
     </Document>
   );
 };
+

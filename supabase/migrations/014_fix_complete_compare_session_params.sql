@@ -1,6 +1,6 @@
--- Migration: Make complete_compare_session idempotent and robust
--- Allows re-completion if already completed with same attempt_b_id
--- Updated parameter names to match PostgREST convention (p_ prefix)
+-- Migration: Fix complete_compare_session parameter names
+-- Updates parameter names to match PostgREST convention (p_ prefix)
+-- This fixes the 400 error when calling the RPC from the frontend
 
 CREATE OR REPLACE FUNCTION complete_compare_session(p_token text, p_attempt_b_id uuid)
 RETURNS uuid
@@ -61,7 +61,10 @@ BEGIN
 END;
 $$;
 
--- Grant execute permissions
+-- Grant execute permissions (in case they don't exist)
 GRANT EXECUTE ON FUNCTION complete_compare_session(text, uuid) TO anon;
 GRANT EXECUTE ON FUNCTION complete_compare_session(text, uuid) TO authenticated;
+
+-- Reload PostgREST schema cache
+SELECT pg_notify('pgrst', 'reload schema');
 

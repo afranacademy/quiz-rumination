@@ -15,6 +15,7 @@ import { getAttemptStorageKey } from "@/features/attempts/getAttemptStorageKey";
 import { getQuizId } from "@/features/attempts/getQuizId";
 import { getCompareSession } from "@/features/compare/getCompareSession";
 import { InviteIdentityGate } from "@/features/compare/InviteIdentityGate";
+import { getInviteTokenSafe } from "@/features/compare/getInviteToken";
 import type { LikertValue, LevelKey } from "@/features/quiz/types";
 
 export default function QuizPage() {
@@ -23,28 +24,17 @@ export default function QuizPage() {
   const params = useParams();
   const inviteToken = searchParams.get("invite");
   
-  // Support multiple token patterns: /quiz?compare=... or /compare?token=... (from URL) or sessionStorage
-  // Also check route params: /compare/invite/:token, /compare/:token, /compare/result/:token
-  const compareTokenFromUrl = searchParams.get("compare") || searchParams.get("token");
-  const compareTokenFromRoute = params.token;
-  const compareTokenFromStorage = sessionStorage.getItem("afran_compare_token");
-  const compareToken = compareTokenFromUrl || compareTokenFromRoute || compareTokenFromStorage;
-  
-  // If token is in URL/route but not in sessionStorage, store it
-  const tokenToStore = compareTokenFromUrl || compareTokenFromRoute;
-  if (tokenToStore && tokenToStore !== compareTokenFromStorage) {
-    sessionStorage.setItem("afran_compare_token", tokenToStore);
-    if (import.meta.env.DEV) {
-      console.log("[QuizPage] Token from URL/route stored in sessionStorage:", tokenToStore.substring(0, 8) + "...");
-    }
-  }
+  // Get invite token (only set in /compare/invite/:token route)
+  // Priority: URL query param (invite=...) > sessionStorage (compare_invite_token)
+  // Do NOT read from other sources to avoid conflicts with person A's token creation
+  const compareToken = getInviteTokenSafe(searchParams);
   
   if (import.meta.env.DEV && compareToken) {
-    console.log("[QuizPage] Compare token detected:", {
-      fromUrl: !!compareTokenFromUrl,
-      fromRoute: !!compareTokenFromRoute,
-      fromStorage: !!compareTokenFromStorage,
-      token: compareToken.substring(0, 8) + "...",
+    console.log("[QuizPage] Invite token detected (component level):", {
+      fromUrl: !!searchParams.get("invite"),
+      fromStorage: !!sessionStorage.getItem("compare_invite_token"),
+      token: compareToken.substring(0, 12) + "...",
+      tokenLength: compareToken.length,
     });
   }
   
@@ -338,8 +328,12 @@ export default function QuizPage() {
   };
 
   const handleComplete = async (quizAnswers: Record<number, LikertValue>) => {
+    console.log("[QUIZ] submit started");
     // Prevent double-submit using ref (prevents race conditions)
     if (isCompletingRef.current || isSubmitting) {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QuizPage.tsx:handleComplete:early-return',message:'[SUBMIT] early return - already submitting',data:{isCompleting:isCompletingRef.current,isSubmitting},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+      // #endregion
       if (import.meta.env.DEV) {
         console.log("[QuizPage] Already submitting, ignoring duplicate submit");
       }
@@ -357,11 +351,14 @@ export default function QuizPage() {
 
     // ============================================
     // CRITICAL: Compute live compare token at top (before any try/await)
+    // Priority: URL query param (compare_token) > URL query param (compare/token) > sessionStorage
+    // Always trim to prevent whitespace issues
     // ============================================
     const currentSearchParams = new URLSearchParams(window.location.search);
-    const liveTokenFromUrl = currentSearchParams.get("compare") || currentSearchParams.get("token");
-    const liveTokenFromStorage = sessionStorage.getItem("afran_compare_token");
-    const liveCompareToken = liveTokenFromUrl || liveTokenFromStorage || null;
+    // Support both compare_token (new explicit param) and compare/token (legacy)
+    // Get invite token using helper (URL query param > sessionStorage)
+    // This token is ONLY set in /compare/invite/:token route
+    const liveCompareToken = getInviteTokenSafe(currentSearchParams);
 
     // Validate attemptId exists - if missing, try to recover
     if (!attemptId || !userId || !quizId) {
@@ -507,6 +504,8 @@ export default function QuizPage() {
         scoreBandId,
       });
       
+      console.log("[SUBMIT] success");
+      
       if (import.meta.env.DEV && requestId) {
         console.log(`[QuizPage] [${requestId}] 🔍 completeAttempt returned:`, {
           id: completedData.id.substring(0, 8) + "...",
@@ -541,18 +540,22 @@ export default function QuizPage() {
       // DO NOT unlock on success - keep lock until navigation completes
 
       // ============================================
-      // CRITICAL: Handle compare flow if token exists
+      // CRITICAL: Handle compare flow if invite token exists
       // ============================================
       if (liveCompareToken) {
+        // Ensure token is trimmed before RPC call
+        const trimmedToken = liveCompareToken.trim();
         const rpcPayload = {
-          p_token: liveCompareToken,
+          p_token: trimmedToken,
           p_attempt_b_id: currentAttemptId,
         };
         
         if (import.meta.env.DEV && requestId) {
-          console.log(`[QuizPage] [${requestId}] 🎯 Compare token detected - completing session:`, {
-            token: liveCompareToken.substring(0, 12) + "...",
+          console.log(`[QuizPage] [${requestId}] 🎯 Invite token detected - completing compare session:`, {
+            token: trimmedToken,
+            tokenLength: trimmedToken.length,
             attemptBId: currentAttemptId,
+            attemptBIdLength: currentAttemptId.length,
             rpcPayload,
           });
         }
@@ -563,23 +566,38 @@ export default function QuizPage() {
           
           if (rpcError) {
             // RPC FAILED - DO NOT navigate, DO NOT fall back
-            const errorMsg = rpcError.message || "Unknown RPC error";
-            if (import.meta.env.DEV && requestId) {
-              console.error(`[QuizPage] [${requestId}] ❌ RPC FAILED:`, {
-                rpcPayload,
-                error: {
-                  code: rpcError.code,
-                  message: rpcError.message,
-                  details: rpcError.details,
-                  hint: rpcError.hint,
-                },
-                rpcResponse: rpcData,
-              });
-            }
+            // Log ALL error details for debugging
+            const errorDetails = {
+              code: rpcError.code,
+              message: rpcError.message,
+              details: rpcError.details,
+              hint: rpcError.hint,
+            };
+            
+            console.error(`[QuizPage] [${requestId}] ❌ RPC FAILED - complete_compare_session:`, {
+              inviteToken: trimmedToken,
+              inviteTokenLength: trimmedToken.length,
+              attemptBId: currentAttemptId,
+              attemptBIdLength: currentAttemptId.length,
+              rpcPayload,
+              error: errorDetails,
+              rpcResponse: rpcData,
+            });
             
             // Show visible dev error
             if (import.meta.env.DEV) {
-              alert(`DEV ERROR: Failed to complete compare session:\n\n${errorMsg}\n\nCheck console for details.`);
+              alert(`DEV ERROR: Failed to complete compare session:\n\nToken: ${trimmedToken}\nToken Length: ${trimmedToken.length}\nAttempt B ID: ${currentAttemptId}\nCode: ${rpcError.code}\nMessage: ${rpcError.message}\nDetails: ${rpcError.details || 'N/A'}\nHint: ${rpcError.hint || 'N/A'}\n\nCheck console for full details.`);
+            }
+            
+            // Show user-friendly toast
+            try {
+              const { toast } = await import("sonner");
+              toast.error("لینک مقایسه نامعتبر/منقضی شد یا توکن ارسال نشد.", {
+                description: rpcError.message || "خطا در تکمیل مقایسه",
+              });
+            } catch (toastError) {
+              // Toast import failed, error already logged to console
+              console.warn("[QuizPage] Failed to show toast:", toastError);
             }
             
             // DO NOT navigate anywhere
@@ -588,19 +606,25 @@ export default function QuizPage() {
             // Unlock to allow retry
             isCompletingRef.current = false;
             setIsSubmitting(false);
-            setLastOperationError(`Compare session failed: ${errorMsg}`);
+            setLastOperationError(`Compare session failed: ${rpcError.message || "Unknown error"}`);
             return; // CRITICAL: Exit immediately
           }
           
           // RPC SUCCEEDED
+          // rpcData is the compare_id (session id) returned from the RPC
+          const compareId = rpcData;
+          
           if (import.meta.env.DEV && requestId) {
-            console.log(`[QuizPage] [${requestId}] ✅ Compare session completed successfully`);
-            console.log(`[QuizPage] [${requestId}] RPC response:`, rpcData);
-            console.log(`[QuizPage] [${requestId}] 🎯 Final navigation target: /compare/result/${liveCompareToken}`);
+            console.log(`[QuizPage] [${requestId}] ✅ Compare session completed successfully:`, {
+              compareId: compareId,
+              inviteToken: trimmedToken,
+              attemptBId: currentAttemptId,
+            });
           }
           
-          // Navigate to compare result page
-          const targetUrl = `/compare/result/${liveCompareToken}`;
+          // Navigate to compare result page using the invite token
+          // The result page will use this token to fetch the completed session
+          const targetUrl = `/compare/result/${trimmedToken}`;
           
           if (import.meta.env.DEV && requestId) {
             console.log(`[QuizPage] [${requestId}] 🎯 Navigation target:`, targetUrl);
@@ -669,6 +693,7 @@ export default function QuizPage() {
       // Lock remains until component unmounts (navigation)
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "Unknown error";
+      console.error("[SUBMIT] error", error);
       if (import.meta.env.DEV && requestId) {
         console.error(`[QuizPage] [${requestId}] ❌ Error completing quiz:`, error);
       if (error instanceof Error) {

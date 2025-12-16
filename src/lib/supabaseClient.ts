@@ -29,4 +29,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 });
 
+// #region agent log
+fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabaseClient.ts:24',message:'Supabase client initialized',data:{supabaseUrl,hasAnonKey:!!supabaseAnonKey,anonKeyLength:supabaseAnonKey?.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+// #endregion
+
 console.log("[supabaseClient] Initialized with URL:", supabaseUrl);

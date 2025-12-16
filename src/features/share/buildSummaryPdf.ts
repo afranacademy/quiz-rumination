@@ -127,7 +127,7 @@ export async function buildSummaryPdfBlob(input: {
     <div style="font-size: 12px; color: #4a5568; line-height: 1.8; text-align: center;">
       اگر دوست داری الگوی ذهنی خودت رو دقیق‌تر بشناسی،<br />
       می‌تونی این آزمون سنجش نشخوار فکری رو تکمیل کنی:<br />
-      <a href="https://zaya.io/testruminationnewtest" style="color: #2d3442; text-decoration: underline; word-break: break-all;">https://zaya.io/testruminationnewtest</a>
+      <a href="https://zaya.io/testruminationnewtest" style="color: #2d3442; text-decoration: underline; font-weight: bold;">تکمیل آزمون سنجش نشخوار فکری</a>
     </div>
   </div>
 </body>

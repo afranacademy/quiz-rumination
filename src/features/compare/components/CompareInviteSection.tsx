@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/app/components/ui/button";
 import { Card, CardContent } from "@/app/components/ui/card";
 import { AppModal } from "@/components/AppModal";
 import { Share2, Check, Copy } from "lucide-react";
 import { toast } from "sonner";
-import { createCompareInvite } from "@/features/compare/createCompareInvite";
+import { getOrCreatePendingCompareToken } from "@/features/compare/getOrCreatePendingCompareToken";
+import { supersedePendingCompareToken } from "@/features/compare/supersedePendingCompareToken";
 import { getLatestCompletedAttempt } from "@/features/compare/getLatestCompletedAttempt";
 import { useAnonAuth } from "@/hooks/useAnonAuth";
 import { supabase } from "@/lib/supabaseClient";
@@ -25,9 +26,86 @@ export function CompareInviteSection({ attemptId }: CompareInviteSectionProps) {
     type: "share" | "copy" | null;
     message: string | null;
   }>({ type: null, message: null });
-  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [tokenStatus, setTokenStatus] = useState<"pending" | "completed" | null>(null);
   const [inviteLoading, setInviteLoading] = useState(false);
+  const [creatingNewLink, setCreatingNewLink] = useState(false);
+  const [currentAttemptAId, setCurrentAttemptAId] = useState<string | null>(null);
+
+  // Single source of truth for invite URL
+  const inviteUrl = inviteToken 
+    ? `${window.location.origin}/compare/invite/${inviteToken}`
+    : null;
+
+  // Helper function to get localStorage key for token
+  const getTokenStorageKey = (attemptAId: string) => `compare_token_${attemptAId}`;
+
+  // Helper function to load token from localStorage
+  const loadTokenFromStorage = (attemptAId: string) => {
+    const stored = localStorage.getItem(getTokenStorageKey(attemptAId));
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed.token && parsed.status) {
+          setInviteToken(parsed.token);
+          setTokenStatus(parsed.status);
+          return true;
+        }
+      } catch (e) {
+        // Invalid JSON, clear it
+        localStorage.removeItem(getTokenStorageKey(attemptAId));
+      }
+    }
+    return false;
+  };
+
+  // Helper function to save token to localStorage
+  const saveTokenToStorage = (attemptAId: string, token: string, status: "pending" | "completed") => {
+    localStorage.setItem(getTokenStorageKey(attemptAId), JSON.stringify({ token, status }));
+  };
+
+  // Fetch current token when modal opens
+  useEffect(() => {
+    if (modalState.type === "invite" && userId && !authLoading) {
+      const fetchCurrentToken = async () => {
+        try {
+          const attemptAId = await getLatestCompletedAttempt(userId);
+          if (!attemptAId) return;
+
+          setCurrentAttemptAId(attemptAId);
+
+          // First try to load from localStorage
+          const storedToken = loadTokenFromStorage(attemptAId);
+          
+          // Fetch current token from server (will reuse if exists, create if not)
+          setInviteLoading(true);
+          try {
+            const result = await getOrCreatePendingCompareToken(attemptAId, 1440);
+            setInviteToken(result.token);
+            setTokenStatus(result.status);
+            saveTokenToStorage(attemptAId, result.token, result.status);
+          } catch (error) {
+            // If fetch fails and we had a stored token, keep it
+            if (!storedToken) {
+              localStorage.removeItem(getTokenStorageKey(attemptAId));
+              setInviteToken(null);
+              setTokenStatus(null);
+            }
+            // Error will be shown in modal
+          } finally {
+            setInviteLoading(false);
+          }
+        } catch (error) {
+          if (import.meta.env.DEV) {
+            console.error("[CompareInviteSection] Error fetching token on modal open:", error);
+          }
+          setInviteLoading(false);
+        }
+      };
+
+      fetchCurrentToken();
+    }
+  }, [modalState.type, userId, authLoading]);
 
   const handleCreateInvite = async () => {
     if (inviteLoading || authLoading) return;
@@ -140,23 +218,39 @@ export function CompareInviteSection({ attemptId }: CompareInviteSectionProps) {
         return;
       }
 
-      // Call Supabase RPC to create compare invite (24 hours = 1440 minutes)
-      const result = await createCompareInvite(attemptAId, 1440);
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareInviteSection.tsx:147',message:'About to call getOrCreatePendingCompareToken',data:{attemptAId,expiresInMinutes:1440},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+
+      // Get or create pending compare token (24 hours = 1440 minutes)
+      const result = await getOrCreatePendingCompareToken(attemptAId, 1440);
+
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareInviteSection.tsx:150',message:'getOrCreatePendingCompareToken succeeded',data:{hasResult:!!result,token:result?.token?.substring(0,12),compareId:result?.compare_id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
 
       if (import.meta.env.DEV) {
-        console.log("[CompareInviteSection] ✅ Invite created:", {
-          session_id: result.session_id,
-          invite_token: result.invite_token.substring(0, 12) + "...",
+        const computedUrl = `${window.location.origin}/compare/invite/${result.token}`;
+        console.log("[CompareInviteSection] ✅ Token retrieved/created:", {
+          compare_id: result.compare_id,
+          token: result.token.substring(0, 12) + "...",
           expires_at: result.expires_at,
-          url: result.url,
+          status: result.status,
+          inviteUrl: computedUrl,
         });
       }
 
-      // Set invite URL and token, then show modal
-      setInviteUrl(result.url);
-      setInviteToken(result.invite_token);
+      // Set token and status, then show modal (URL is computed from token)
+      setInviteToken(result.token);
+      setTokenStatus(result.status);
+      setCurrentAttemptAId(attemptAId);
+      saveTokenToStorage(attemptAId, result.token, result.status);
       setModalState({ type: "invite" });
     } catch (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareInviteSection.tsx:164',message:'Error in handleCreateInvite',data:{errorMessage:error instanceof Error?error.message:String(error),errorStack:error instanceof Error?error.stack:null,errorName:error instanceof Error?error.name:null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,E'})}).catch(()=>{});
+      // #endregion
+
       const errorMsg = error instanceof Error ? error.message : "خطا در ایجاد لینک دعوت. لطفاً دوباره تلاش کنید.";
       
       if (import.meta.env.DEV) {
@@ -175,7 +269,12 @@ export function CompareInviteSection({ attemptId }: CompareInviteSectionProps) {
   };
 
   const handleInviteShare = async () => {
-    if (!inviteUrl) return;
+    if (!inviteToken || !inviteUrl) return;
+
+    // Debug log in dev
+    if (import.meta.env.DEV) {
+      console.log("[CompareInviteSection] Sharing invite:", { token: inviteToken, inviteUrl });
+    }
 
     const result = await shareOrCopyText({
       title: "دعوت به مقایسه‌ی ذهن‌ها",
@@ -205,11 +304,19 @@ export function CompareInviteSection({ attemptId }: CompareInviteSectionProps) {
   };
 
   const handleInviteCopy = async () => {
-    if (!inviteUrl) return;
+    if (!inviteToken || !inviteUrl) return;
+
+    // Debug log in dev
+    if (import.meta.env.DEV) {
+      console.log("[CompareInviteSection] Copying invite:", { token: inviteToken, inviteUrl });
+    }
+
+    // Always use the canonical URL string, never read from DOM
+    const urlToCopy = inviteUrl;
 
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(inviteUrl);
+        await navigator.clipboard.writeText(urlToCopy);
         setShareStatus({ type: "copy", message: "کپی شد" });
         toast.success("لینک کپی شد");
         setTimeout(() => {
@@ -218,7 +325,7 @@ export function CompareInviteSection({ attemptId }: CompareInviteSectionProps) {
         return;
       }
 
-      const success = await copyText(inviteUrl);
+      const success = await copyText(urlToCopy);
       if (success) {
         setShareStatus({ type: "copy", message: "کپی شد" });
         toast.success("لینک کپی شد");
@@ -237,6 +344,98 @@ export function CompareInviteSection({ attemptId }: CompareInviteSectionProps) {
         message: "خطا در کپی لینک. لطفاً لینک را دستی کپی کنید.",
       });
       toast.error("خطا در کپی لینک");
+    }
+  };
+
+  const handleCreateNewLink = async () => {
+    if (creatingNewLink || authLoading) return;
+
+    // Confirm user intent
+    const confirmed = window.confirm(
+      "آیا مطمئن هستید که می‌خواهید لینک جدید بسازید؟ لینک قبلی دیگر کار نخواهد کرد."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setCreatingNewLink(true);
+    try {
+      if (!userId) {
+        const errorMsg = "احراز هویت انجام نشده است. لطفاً صفحه را رفرش کنید.";
+        toast.error(errorMsg);
+        setCreatingNewLink(false);
+        return;
+      }
+
+      // Resolve attempt ID
+      const attemptAId = await getLatestCompletedAttempt(userId);
+
+      if (!attemptAId) {
+        const errorMsg = "اطلاعات آزمون یافت نشد. لطفاً دوباره آزمون رو انجام بدید.";
+        toast.error(errorMsg);
+        setCreatingNewLink(false);
+        return;
+      }
+
+      // Validate attempt is completed
+      const { data: attemptCheck, error: attemptCheckError } = await supabase
+        .from("attempts")
+        .select("id, status, total_score")
+        .eq("id", attemptAId)
+        .maybeSingle();
+
+      if (attemptCheckError || !attemptCheck) {
+        const errorMsg = "خطا در بررسی اطلاعات آزمون";
+        toast.error(errorMsg);
+        setCreatingNewLink(false);
+        return;
+      }
+
+      if (attemptCheck.status !== "completed" || attemptCheck.total_score === null) {
+        const errorMsg = "اول آزمون را کامل کنید";
+        toast.error(errorMsg);
+        setCreatingNewLink(false);
+        return;
+      }
+
+        // Supersede old tokens and create new one (24 hours = 1440 minutes)
+        const result = await supersedePendingCompareToken(attemptAId, 1440);
+
+        if (import.meta.env.DEV) {
+          console.log("[CompareInviteSection] ✅ New token created after superseding:", {
+            session_id: result.session_id,
+            invite_token: result.invite_token.substring(0, 12) + "...",
+            expires_at: result.expires_at,
+          });
+        }
+
+        // Update token and status (URL is computed from token)
+        if (!currentAttemptAId) {
+          const resolvedAttemptAId = await getLatestCompletedAttempt(userId);
+          if (resolvedAttemptAId) {
+            setCurrentAttemptAId(resolvedAttemptAId);
+            setInviteToken(result.invite_token);
+            setTokenStatus("pending");
+            saveTokenToStorage(resolvedAttemptAId, result.invite_token, "pending");
+            toast.success("لینک جدید ساخته شد");
+          }
+        } else {
+          setInviteToken(result.invite_token);
+          setTokenStatus("pending");
+          saveTokenToStorage(currentAttemptAId, result.invite_token, "pending");
+          toast.success("لینک جدید ساخته شد");
+        }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "خطا در ساخت لینک جدید. لطفاً دوباره تلاش کنید.";
+      
+      if (import.meta.env.DEV) {
+        console.error("[CompareInviteSection] ❌ Error creating new link:", error);
+      }
+
+      toast.error(errorMsg);
+    } finally {
+      setCreatingNewLink(false);
     }
   };
 
@@ -287,95 +486,138 @@ export function CompareInviteSection({ attemptId }: CompareInviteSectionProps) {
             <div className="p-4 rounded-2xl bg-white/10 border border-white/20 text-center">
               <p className="text-sm text-foreground/80">در حال ساخت لینک…</p>
             </div>
-          ) : inviteUrl ? (
+          ) : inviteUrl && inviteToken ? (
             <>
-              <div className="p-4 rounded-2xl bg-black/20 border border-white/15">
-                <p className="text-xs text-muted-foreground/70 mb-2">لینک دعوت:</p>
-                <p className="text-sm sm:text-base text-foreground font-mono break-all select-all">
-                  {inviteUrl}
-                </p>
-              </div>
-              
-              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-                <p className="text-xs text-muted-foreground/70 mb-2">یا لینک را دستی کپی کنید:</p>
-                <textarea
-                  readOnly
-                  value={inviteUrl}
-                  className="w-full p-2 rounded-lg bg-black/20 border border-white/10 text-sm text-foreground font-mono resize-none"
-                  rows={2}
-                  onClick={(e) => (e.target as HTMLTextAreaElement).select()}
-                />
-              </div>
+              {/* Show different UI based on status */}
+              {tokenStatus === "completed" ? (
+                <>
+                  {/* Completed Status: Show View Compare button */}
+                  <div className="p-4 rounded-2xl bg-primary/20 border border-primary/30 text-center">
+                    <p className="text-sm text-primary font-medium mb-4">
+                      مقایسه کامل شده است! می‌توانید نتیجه را ببینید.
+                    </p>
+                    <Button
+                      onClick={() => {
+                        navigate(`/compare/invite/${inviteToken}`);
+                        setModalState({ type: null });
+                      }}
+                      className="w-full rounded-xl min-h-[44px] bg-primary/80 hover:bg-primary border-primary/40"
+                    >
+                      دیدن کارت مقایسه
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Pending Status: Show invite link and share buttons */}
+                  <div className="p-4 rounded-2xl bg-black/20 border border-white/15">
+                    <p className="text-xs text-muted-foreground/70 mb-2">لینک دعوت:</p>
+                    <p 
+                      className="text-sm sm:text-base text-foreground font-mono select-all"
+                      style={{ 
+                        whiteSpace: 'nowrap', 
+                        overflow: 'hidden', 
+                        textOverflow: 'ellipsis' 
+                      }}
+                      title={inviteUrl || ''}
+                    >
+                      {inviteUrl}
+                    </p>
+                  </div>
+                  
+                  <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                    <p className="text-xs text-muted-foreground/70 mb-2">یا لینک را دستی کپی کنید:</p>
+                    <textarea
+                      readOnly
+                      value={inviteUrl || ''}
+                      className="w-full p-2 rounded-lg bg-black/20 border border-white/10 text-sm text-foreground font-mono resize-none"
+                      style={{ whiteSpace: 'nowrap', overflowX: 'auto' }}
+                      rows={2}
+                      onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                    />
+                  </div>
+                  
+                  <p className="text-xs text-muted-foreground/80 leading-6 text-center">
+                    این لینک تا ۲۴ ساعت معتبر است.
+                  </p>
+                  <p className="text-xs text-muted-foreground/70 leading-6 text-center">
+                    بعد از تکمیل آزمون توسط نفر دوم، مقایسه فعال می‌شود.
+                  </p>
 
-              <p className="text-xs text-muted-foreground/80 leading-6 text-center">
-                این لینک تا ۲۴ ساعت معتبر است.
-              </p>
-              <p className="text-xs text-muted-foreground/70 leading-6 text-center">
-                بعد از تکمیل آزمون توسط نفر دوم، مقایسه فعال می‌شود.
-              </p>
-
-              {shareStatus.message && (
-                <div
-                  className={`p-3 rounded-xl text-sm text-center ${
-                    shareStatus.type === "copy" && shareStatus.message.includes("کپی شد")
-                      ? "bg-primary/20 text-primary border border-primary/30"
-                      : shareStatus.type === null && shareStatus.message.includes("خطا")
-                      ? "bg-red-500/20 text-red-400 border border-red-500/30"
-                      : "bg-white/10 text-foreground/90 border border-white/15"
-                  }`}
-                >
-                  {shareStatus.message}
-                </div>
-              )}
-
-              <div className="flex flex-col sm:flex-row gap-3">
-                <Button
-                  onClick={handleInviteShare}
-                  className="flex-1 rounded-xl min-h-[44px] bg-primary/80 hover:bg-primary border-primary/40"
-                >
-                  {shareStatus.type === "share" && shareStatus.message === "ارسال شد" ? (
-                    <>
-                      <Check className="w-4 h-4 ml-2" />
-                      ارسال شد
-                    </>
-                  ) : (
-                    <>
-                      <Share2 className="w-4 h-4 ml-2" />
-                      اشتراک‌گذاری لینک
-                    </>
+                  {shareStatus.message && (
+                    <div
+                      className={`p-3 rounded-xl text-sm text-center ${
+                        shareStatus.type === "copy" && shareStatus.message.includes("کپی شد")
+                          ? "bg-primary/20 text-primary border border-primary/30"
+                          : shareStatus.type === null && shareStatus.message.includes("خطا")
+                          ? "bg-red-500/20 text-red-400 border border-red-500/30"
+                          : "bg-white/10 text-foreground/90 border border-white/15"
+                      }`}
+                    >
+                      {shareStatus.message}
+                    </div>
                   )}
-                </Button>
-                <Button
-                  onClick={handleInviteCopy}
-                  variant="outline"
-                  className="flex-1 rounded-xl min-h-[44px] bg-white/10 border-white/20"
-                >
-                  {shareStatus.type === "copy" && shareStatus.message === "کپی شد" ? (
-                    <>
-                      <Check className="w-4 h-4 ml-2" />
-                      کپی شد
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-4 h-4 ml-2" />
-                      کپی لینک
-                    </>
-                  )}
-                </Button>
-              </div>
 
-              {/* View Compare Card Button */}
-              {inviteToken && (
-                <Button
-                  onClick={() => {
-                    navigate(`/compare/result/${inviteToken}`);
-                    setModalState({ type: null });
-                  }}
-                  variant="outline"
-                  className="w-full rounded-xl min-h-[44px] bg-white/10 border-white/20 mt-2"
-                >
-                  دیدن کارت مقایسه
-                </Button>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <Button
+                      onClick={handleInviteShare}
+                      className="flex-1 rounded-xl min-h-[44px] bg-primary/80 hover:bg-primary border-primary/40"
+                    >
+                      {shareStatus.type === "share" && shareStatus.message === "ارسال شد" ? (
+                        <>
+                          <Check className="w-4 h-4 ml-2" />
+                          ارسال شد
+                        </>
+                      ) : (
+                        <>
+                          <Share2 className="w-4 h-4 ml-2" />
+                          اشتراک‌گذاری لینک
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      onClick={handleInviteCopy}
+                      variant="outline"
+                      className="flex-1 rounded-xl min-h-[44px] bg-white/10 border-white/20"
+                    >
+                      {shareStatus.type === "copy" && shareStatus.message === "کپی شد" ? (
+                        <>
+                          <Check className="w-4 h-4 ml-2" />
+                          کپی شد
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4 ml-2" />
+                          کپی لینک
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
+                  {/* View Comparison Status Button */}
+                  {inviteToken && (
+                    <Button
+                      onClick={() => {
+                        navigate(`/compare/invite/${inviteToken}`);
+                        setModalState({ type: null });
+                      }}
+                      variant="outline"
+                      className="w-full rounded-xl min-h-[44px] bg-white/10 border-white/20"
+                    >
+                      دیدن وضعیت مقایسه
+                    </Button>
+                  )}
+
+                  {/* Create New Link Button */}
+                  <Button
+                    onClick={handleCreateNewLink}
+                    disabled={creatingNewLink}
+                    variant="outline"
+                    className="w-full rounded-xl min-h-[44px] bg-white/5 border-white/10 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    {creatingNewLink ? "در حال ساخت لینک جدید…" : "ساخت لینک جدید"}
+                  </Button>
+                </>
               )}
             </>
           ) : (

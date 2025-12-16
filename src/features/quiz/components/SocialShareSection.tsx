@@ -10,7 +10,7 @@ import { pickSummaryRange } from "@/features/share/summaryRanges";
 import type { LevelKey } from "../types";
 import { CompareInviteSection } from "@/features/compare/components/CompareInviteSection";
 import { MindPatternCard } from "./MindPatternCard";
-import { INVITE_LINK_TEXT, INVITE_LINK_URL } from "@/utils/pdfConstants";
+import { formatInviteText } from "@/utils/inviteCta";
 
 interface SocialShareSectionProps {
   level: LevelKey;
@@ -51,8 +51,7 @@ export function SocialShareSection({
       "",
       `امتیاز: ${score} از ${maxScore}`,
       "",
-      INVITE_LINK_TEXT,
-      INVITE_LINK_URL,
+      formatInviteText(true), // Include URL for share text
     ];
     return lines.join("\n");
   })();

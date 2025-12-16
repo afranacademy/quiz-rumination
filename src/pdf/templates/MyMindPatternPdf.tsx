@@ -4,7 +4,10 @@ import { PDF_COLORS } from "../theme/colors";
 import { PDF_TYPOGRAPHY } from "../theme/typography";
 import { PDF_LAYOUT } from "../theme/layout";
 import { PDF_RTL } from "../theme/rtl";
+import { ITEM_MIN_PRESENCE } from "../theme/pagination";
 import { PdfBrandHeader } from "../components/PdfBrandHeader";
+import { PdfCtaLink } from "../components/PdfCtaLink";
+import { formatPersianDate } from "@/utils/formatPersianDate";
 
 // Font registration is handled in buildPdf.ts
 // This ensures fonts are registered before PDF generation
@@ -23,6 +26,7 @@ const basePageStyle = StyleSheet.create({
 
 interface MyMindPatternPdfProps {
   firstName?: string | null;
+  now?: Date;
   // Data will be added later - skeleton for now
 }
 
@@ -32,12 +36,14 @@ interface MyMindPatternPdfProps {
  */
 export const MyMindPatternPdf: React.FC<MyMindPatternPdfProps> = ({
   firstName,
+  now,
 }) => {
-  const dateStr = new Date().toLocaleDateString("fa-IR", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
+  const safeNow = now ?? new Date();
+  const dateStr = formatPersianDate(safeNow);
+  
+  if (import.meta.env.DEV) {
+    console.log("[PDF] now:", safeNow.toISOString(), formatPersianDate(safeNow));
+  }
 
   const nameLine = firstName ? `${firstName}، ` : "";
 
@@ -75,7 +81,7 @@ export const MyMindPatternPdf: React.FC<MyMindPatternPdfProps> = ({
             ]}
           >
             {nameLine}این یک راهنمای ساده است که می‌تونی برای کسایی که دوست
-            داری بدونن ذهنم درگیر نشخوار فکری، در موقعیت‌های مختلف چطور کار می‌کنه،
+            داری بدونی ذهنت درگیر نشخوار فکری، در موقعیت‌های مختلف چطور کار می‌کنه،
             براشون بفرستی.
           </Text>
           <Text
@@ -106,7 +112,7 @@ export const MyMindPatternPdf: React.FC<MyMindPatternPdfProps> = ({
         <PdfBrandHeader title="الگوی ذهنی من" />
 
         {/* Cover Card */}
-        <View style={[PDF_LAYOUT.card, PDF_LAYOUT.cardHighlight, PDF_RTL.section]}>
+        <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={[PDF_LAYOUT.card, PDF_LAYOUT.cardHighlight, PDF_RTL.section]}>
           <Text
             style={[
               PDF_TYPOGRAPHY.sectionTitle,
@@ -130,8 +136,8 @@ export const MyMindPatternPdf: React.FC<MyMindPatternPdfProps> = ({
         </View>
 
         {/* Placeholder section */}
-        <View style={PDF_RTL.section}>
-          <View style={PDF_LAYOUT.card}>
+        <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={PDF_RTL.section}>
+          <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={PDF_LAYOUT.card}>
             <Text
               style={[
                 PDF_TYPOGRAPHY.bodySmall,
@@ -145,39 +151,8 @@ export const MyMindPatternPdf: React.FC<MyMindPatternPdfProps> = ({
           </View>
         </View>
 
-        {/* Footer */}
-        <View style={PDF_LAYOUT.footer}>
-          <View style={PDF_LAYOUT.inviteLink}>
-            <Text
-              style={[
-                PDF_TYPOGRAPHY.bodySmall,
-                {
-                  color: PDF_COLORS.textLight,
-                  textAlign: "center",
-                  marginBottom: 8,
-                },
-              ]}
-            >
-              اگر دوست داری الگوی ذهنی خودت رو دقیق‌تر بشناسی،{"\n"}
-              می‌تونی این آزمون سنجش نشخوار فکری رو تکمیل کنی:
-            </Text>
-            <Text
-              style={[
-                PDF_TYPOGRAPHY.bodySmall,
-                {
-                  color: PDF_COLORS.primaryDark,
-                  textAlign: "center",
-                  textDecoration: "underline",
-                },
-              ]}
-            >
-              https://zaya.io/testruminationnewtest
-            </Text>
-          </View>
-          <Text style={[PDF_TYPOGRAPHY.footer, { color: PDF_COLORS.textLighter, marginTop: 12 }]}>
-            آکادمی افران - آزمون سنجش نشخوار فکری
-          </Text>
-        </View>
+        {/* CTA/Invite Link - Only at end, separated from content */}
+        <PdfCtaLink />
         <Text style={[PDF_TYPOGRAPHY.pageNumber, PDF_LAYOUT.pageNumber, { color: PDF_COLORS.textLighter }]}>
           1
         </Text>

@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { getCompareSession } from "@/features/compare/getCompareSession";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { supabase } from "@/lib/supabaseClient";
 import type { CompareSession } from "@/features/compare/getCompareSession";
+import { storeInviteToken } from "@/features/compare/getInviteToken";
 
 export default function CompareInvitePage() {
-  const { token } = useParams<{ token: string }>();
+  const { token: tokenParam } = useParams<{ token: string }>();
+  // Trim token to prevent whitespace issues
+  const token = tokenParam?.trim() || null;
   const navigate = useNavigate();
   const [session, setSession] = useState<CompareSession | null>(null);
   const [loading, setLoading] = useState(true);
@@ -25,30 +27,102 @@ export default function CompareInvitePage() {
       return;
     }
 
-    // Store token in sessionStorage so it persists across navigation to /quiz and /result
-    sessionStorage.setItem("afran_compare_token", token);
-    
+    // Debug log in dev
     if (import.meta.env.DEV) {
-      console.log("[CompareInvitePage] Token stored in sessionStorage:", token.substring(0, 12) + "...");
+      console.log("[CompareInvitePage] Token received:", { 
+        raw: tokenParam, 
+        trimmed: token, 
+        length: token.length 
+      });
     }
+
+    // Store token in sessionStorage using dedicated key (only set in invite route)
+    // This ensures token persists through quiz flow and is not overwritten by person A
+    storeInviteToken(token);
 
     if (import.meta.env.DEV) {
       console.log("[CompareInvitePage] Loading session for token:", token);
     }
 
-    // Fetch session using service function (uses RPC internally)
+    // Fetch token info using RPC (validates token exists and checks expiry)
     const loadSession = async () => {
       try {
-        const sessionData = await getCompareSession(token);
+        // Call RPC directly to get token info
+        const trimmedToken = token.trim();
+        
+        // Debug: Log token and RPC call
+        console.log("[CompareInvitePage] Token from URL:", {
+          tokenParam,
+          trimmed: trimmedToken,
+          length: trimmedToken.length,
+        });
 
-        if (!sessionData) {
-          if (import.meta.env.DEV) {
-            console.log("[CompareInvitePage] No valid session found or expired for token:", token);
-          }
-          setError("invalid or expired link");
+        const { data, error } = await supabase.rpc('get_compare_token_by_token', {
+          p_token: trimmedToken
+        });
+
+        // Debug: Log RPC response
+        console.log("[CompareInvitePage] RPC response:", {
+          hasError: !!error,
+          errorCode: error?.code,
+          errorMessage: error?.message,
+          hasData: !!data,
+          dataLength: Array.isArray(data) ? data.length : null,
+          data: data,
+        });
+
+        if (error) {
+          console.error("[CompareInvitePage] RPC error:", error);
+          setError("خطا در بررسی لینک");
           setLoading(false);
           return;
         }
+
+        if (!data || (Array.isArray(data) && data.length === 0)) {
+          console.log("[CompareInvitePage] Token not found:", trimmedToken);
+          setError("لینک نامعتبر است");
+          setLoading(false);
+          return;
+        }
+
+        const tokenRow = Array.isArray(data) ? data[0] : data;
+
+        // Check expiry
+        const now = new Date();
+        const expiresAt = tokenRow.expires_at ? new Date(tokenRow.expires_at) : null;
+        const isExpired = expiresAt !== null && expiresAt <= now;
+
+        if (isExpired) {
+          console.log("[CompareInvitePage] Token expired:", {
+            token: trimmedToken,
+            expires_at: tokenRow.expires_at,
+            now: now.toISOString(),
+          });
+          setError("لینک منقضی شده است");
+          setLoading(false);
+          return;
+        }
+
+        // Token is valid, continue with invite flow
+        console.log("[CompareInvitePage] Token is valid, continuing invite flow:", {
+          token: trimmedToken,
+          status: tokenRow.status,
+          compare_id: tokenRow.compare_id,
+          attempt_a_id: tokenRow.attempt_a_id,
+          attempt_b_id: tokenRow.attempt_b_id,
+        });
+
+        // Construct session data from token row (we already have all the data we need)
+        const sessionData: CompareSession = {
+          id: tokenRow.compare_id,
+          attemptAId: tokenRow.attempt_a_id,
+          attemptBId: tokenRow.attempt_b_id || null,
+          status: tokenRow.status === "completed" ? "completed" : "pending",
+          createdAt: new Date().toISOString(), // We don't have created_at from token RPC, but it's not critical
+          expiresAt: tokenRow.expires_at,
+          inviterFirstName: null, // Will be fetched below
+          inviterLastName: null, // Will be fetched below
+        };
 
         setSession(sessionData);
 
@@ -230,7 +304,7 @@ export default function CompareInvitePage() {
         sessionStorage.setItem("afran_invitee_last_name", formData.lastName.trim());
       }
       sessionStorage.setItem("afran_invitee_phone", normalizedPhone);
-      sessionStorage.setItem("afran_compare_token", token!);
+      // Token is already stored via storeInviteToken() in useEffect
       sessionStorage.setItem(`afran_invited_identity_done_${token}`, "1");
       sessionStorage.setItem(`afran_invited_identity_${token}`, JSON.stringify({
         firstName: formData.firstName.trim(),
@@ -238,8 +312,18 @@ export default function CompareInvitePage() {
         phone: normalizedPhone,
       }));
 
-      // Navigate to quiz
-      navigate(`/quiz?compare=${token}`);
+      // Navigate to quiz with token in query param (explicit and debuggable)
+      // Token is already stored in sessionStorage via storeInviteToken()
+      const trimmedToken = token.trim();
+      navigate(`/quiz?invite=${trimmedToken}`);
+      
+      if (import.meta.env.DEV) {
+        console.log("[CompareInvitePage] Navigating to quiz with invite token:", {
+          token: trimmedToken,
+          url: `/quiz?invite=${trimmedToken}`,
+          storedInStorage: true,
+        });
+      }
     } catch (err) {
       if (import.meta.env.DEV) {
         console.error("[CompareInvitePage] Error submitting identity:", err);
@@ -261,15 +345,20 @@ export default function CompareInvitePage() {
   }
 
   if (error) {
-    const isExpired = error === "invalid or expired link" || error.includes("expired");
+    const isExpired = error === "این لینک منقضی شده است" || error.includes("منقضی");
+    const isInvalid = error === "لینک نامعتبر است" || error.includes("نامعتبر");
     
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="text-center space-y-4 max-w-md">
-          <h1 className="text-xl text-foreground font-medium">لینک نامعتبر یا منقضی شده</h1>
+          <h1 className="text-xl text-foreground font-medium">
+            {isExpired ? "این لینک منقضی شده است" : isInvalid ? "لینک نامعتبر است" : error}
+          </h1>
           <p className="text-sm text-foreground/70">
             {isExpired
               ? "این لینک منقضی شده است. لطفاً دوباره لینک دعوت بسازید."
+              : isInvalid
+              ? "لینک نامعتبر است. لطفاً لینک صحیح را بررسی کنید."
               : error}
           </p>
           <Button onClick={() => navigate("/")} variant="outline">

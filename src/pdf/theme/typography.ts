@@ -49,17 +49,17 @@ export const PDF_TYPOGRAPHY = StyleSheet.create({
   // Body typography
   body: {
     fontSize: 12,
-    lineHeight: 1.9,
+    lineHeight: 1.7,
     textAlign: "right" as const,
   },
   bodySmall: {
     fontSize: 10,
-    lineHeight: 1.7,
+    lineHeight: 1.6,
     textAlign: "right" as const,
   },
   bodyCenter: {
     fontSize: 12,
-    lineHeight: 1.9,
+    lineHeight: 1.7,
     textAlign: "center" as const,
   },
   

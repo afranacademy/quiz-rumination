@@ -1,5 +1,5 @@
 import { buildMindPatternItems, type MindPatternItem } from "./buildMindPattern";
-import { INVITE_LINK_TEXT, INVITE_LINK_URL } from "@/utils/pdfConstants";
+import { formatInviteText } from "@/utils/inviteCta";
 
 export function buildMindPatternShareText(
   items: MindPatternItem[],
@@ -23,8 +23,7 @@ export function buildMindPatternShareText(
     "",
     "این نتیجه مربوط به آزمون «سنجش نشخوار فکری – ذهن وراج» است.",
     "",
-    INVITE_LINK_TEXT,
-    INVITE_LINK_URL,
+    formatInviteText(true), // Include URL for share text
   ];
 
   return lines.join("\n");

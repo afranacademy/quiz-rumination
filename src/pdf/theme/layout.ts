@@ -44,7 +44,7 @@ export const PDF_LAYOUT = StyleSheet.create({
   
   // Sections (content-driven spacing)
   section: {
-    marginBottom: 16,
+    marginBottom: 12,
   },
   sectionDivider: {
     borderBottom: `1px solid ${PDF_COLORS.border}`,
@@ -56,7 +56,7 @@ export const PDF_LAYOUT = StyleSheet.create({
     border: `1px solid ${PDF_COLORS.border}`,
     borderRadius: 4,
     padding: 16, // Reduced from 18 for tighter spacing
-    marginBottom: 12,
+    marginBottom: 10,
   },
   cardHighlight: {
     backgroundColor: PDF_COLORS.primaryLightest,
@@ -66,7 +66,7 @@ export const PDF_LAYOUT = StyleSheet.create({
   // Dividers
   divider: {
     borderTop: `1px solid ${PDF_COLORS.border}`,
-    marginVertical: 12, // Reduced from 20 for denser content
+    marginVertical: 8,
   },
   
   // Lists

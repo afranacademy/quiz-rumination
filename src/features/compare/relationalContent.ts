@@ -804,6 +804,8 @@ export function getSimilaritiesAndDifferences(
   return { similarities, differences };
 }
 
+import { formatInviteText } from "@/utils/inviteCta";
+
 // Update generateSafeShareText with standard text
 export function generateSafeShareText(
   nameA: string,
@@ -820,6 +822,9 @@ export function generateSafeShareText(
     lines.push("");
     lines.push(`بزرگ‌ترین تفاوت ما در: ${getDimensionNameForSnapshot(largestDiffKey)}`);
   }
+
+  lines.push("");
+  lines.push(formatInviteText(true)); // Include URL for share text
 
   return lines.join("\n");
 }

@@ -75,7 +75,7 @@ export function AppModal({ title, description, children, onClose, isOpen }: AppM
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5" style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 relative" style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>
           {children}
         </div>
       </div>

@@ -194,6 +194,7 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
     setIsGeneratingPdf(true);
     try {
       const filename = generateResultPdfFilename();
+      const now = new Date();
       
       // Generate items from answers using MENTAL_PATTERN_COPY
       const items = Array.from({ length: 12 }, (_, i) => {
@@ -215,6 +216,7 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
         <ResultPdfDocument
           firstName={firstName}
           items={items}
+          now={now}
         />
       );
 
@@ -245,6 +247,7 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
     setIsGeneratingPdf(true);
     try {
       const filename = generateResultPdfFilename();
+      const now = new Date();
       
       // Generate items from answers using MENTAL_PATTERN_COPY
       const items = Array.from({ length: 12 }, (_, i) => {
@@ -266,6 +269,7 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
         <ResultPdfDocument
           firstName={firstName}
           items={items}
+          now={now}
         />
       );
 
@@ -386,7 +390,7 @@ function MindPatternModalContent({
   return (
     <div ref={modalContentRef} id="mental-pattern-pdf-root" data-pdf-root="pattern" className="space-y-4 sm:space-y-5">
       {/* 12 Personalized Sentences - One per question */}
-      <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-2">
+      <div className="space-y-4 overflow-y-auto pr-2" style={{ maxHeight: "calc(70vh - 200px)", paddingBottom: "140px" }}>
         {items.map((item) => {
           // Extract short title from question text (first few words)
           const questionTitle = item.questionText
@@ -428,25 +432,8 @@ function MindPatternModalContent({
         </p>
       </div>
 
-      {/* Invite Link Section */}
-      <div className="pt-4 border-t border-white/10">
-        <p className="text-xs text-foreground/60 text-center leading-6 mb-2">
-          اگر دوست داری الگوی ذهنی خودت رو دقیق‌تر بشناسی،
-          <br />
-          می‌تونی این آزمون سنجش نشخوار فکری رو تکمیل کنی:
-        </p>
-        <a
-          href="https://zaya.io/testruminationnewtest"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs text-primary hover:underline text-center block break-all"
-        >
-          https://zaya.io/testruminationnewtest
-        </a>
-      </div>
-
-      {/* Share & PDF Actions */}
-      <div className="pt-4 border-t border-white/10 space-y-3">
+      {/* Share & PDF Actions - Sticky Footer */}
+      <div className="sticky bottom-0 left-0 right-0 pt-4 border-t border-white/10 space-y-3 bg-background/95 backdrop-blur-sm -mx-4 -mb-4 px-4 pb-4 z-10">
         <div className="flex flex-col sm:flex-row gap-3">
           <Button
             onClick={onDownloadPdf}

@@ -8,7 +8,9 @@ import {
   Image,
 } from "@react-pdf/renderer";
 import { PDF_RTL } from "../theme/rtl";
-import { ITEM_MIN_PRESENCE, listItemContainer } from "../theme/pagination";
+import { ITEM_MIN_PRESENCE, listItemContainer } from "./theme/pagination";
+import { PdfCtaLink } from "./components/PdfCtaLink";
+import { formatPersianDate } from "@/utils/formatPersianDate";
 
 // AFRAN Brand Colors (HEX only) - Corporate Report Style
 const COLORS = {
@@ -102,7 +104,7 @@ const styles = StyleSheet.create({
     textAlign: "right" as const,
   },
   section: {
-    marginBottom: 16,
+    marginBottom: 12,
   },
   sectionTitle: {
     fontSize: 22,
@@ -118,7 +120,12 @@ const styles = StyleSheet.create({
     border: `1px solid ${COLORS.border}`,
     borderRadius: 4,
     padding: 16,
-    marginBottom: 12,
+    marginBottom: 10,
+  },
+  sectionTitleWrapper: {
+    marginBottom: 8,
+    paddingBottom: 8,
+    borderBottom: `1px solid ${COLORS.border}`,
   },
   itemTitleText: {
     fontSize: 13,
@@ -135,7 +142,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 4,
-    marginLeft: 8, // RTL: space after number
+  },
+  numberBox: {
+    width: 24,
+    marginLeft: 8,
+    textAlign: "center" as const,
+  },
+  itemTitleTextWrapper: {
+    flex: 1,
+    textAlign: "right" as const,
   },
   itemOptionLabel: {
     fontSize: 10,
@@ -146,20 +161,20 @@ const styles = StyleSheet.create({
   text: {
     fontSize: 12,
     color: COLORS.text,
-    lineHeight: 1.9,
+    lineHeight: 1.7,
     textAlign: "right" as const,
     marginBottom: 8,
   },
   textSmall: {
     fontSize: 10,
     color: COLORS.textLight,
-    lineHeight: 1.7,
+    lineHeight: 1.6,
     textAlign: "right" as const,
     marginBottom: 6,
   },
   divider: {
     borderTop: `1px solid ${COLORS.border}`,
-    marginVertical: 12, // Reduced from 20 for denser content
+    marginVertical: 8,
   },
   footer: {
     position: "absolute",
@@ -180,7 +195,7 @@ const styles = StyleSheet.create({
   inviteText: {
     fontSize: 11,
     color: COLORS.textLight,
-    lineHeight: 1.8,
+    lineHeight: 1.7,
     textAlign: "center",
     marginBottom: 8,
   },
@@ -220,21 +235,20 @@ interface MentalPatternItem {
 interface ResultPdfDocumentProps {
   firstName?: string | null;
   items: MentalPatternItem[];
+  now?: Date;
 }
-
-const INVITE_LINK_TEXT =
-  "اگر دوست داری الگوی ذهنی خودت رو دقیق‌تر بشناسی،\nمی‌تونی این آزمون سنجش نشخوار فکری رو تکمیل کنی:";
-const INVITE_LINK_URL = "https://zaya.io/testruminationnewtest";
 
 export const ResultPdfDocument: React.FC<ResultPdfDocumentProps> = ({
   firstName,
   items,
+  now,
 }) => {
-  const dateStr = new Date().toLocaleDateString("fa-IR", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
+  const safeNow = now ?? new Date();
+  const dateStr = formatPersianDate(safeNow);
+  
+  if (import.meta.env.DEV) {
+    console.log("[PDF] now:", safeNow.toISOString(), formatPersianDate(safeNow));
+  }
 
   const nameLine = firstName ? `${firstName}، ` : "";
 
@@ -250,7 +264,7 @@ export const ResultPdfDocument: React.FC<ResultPdfDocumentProps> = ({
           <Text style={styles.coverTitle}>الگوی ذهنی من</Text>
           <Text style={styles.coverSubtitle}>
             {nameLine}این یک راهنمای ساده است که می‌تونی برای کسایی که دوست
-            داری بدونن ذهنم درگیر نشخوار فکری، در موقعیت‌های مختلف چطور کار می‌کنه،
+            داری بدونی ذهنت درگیر نشخوار فکری، در موقعیت‌های مختلف چطور کار می‌کنه،
             براشون بفرستی.
           </Text>
           <Text style={styles.coverDate}>{dateStr}</Text>
@@ -266,7 +280,7 @@ export const ResultPdfDocument: React.FC<ResultPdfDocumentProps> = ({
           <Text style={styles.headerTitle}>الگوی ذهنی من</Text>
         </View>
 
-        <View style={styles.section}>
+        <View wrap={false} style={styles.sectionTitleWrapper}>
           <Text style={styles.sectionTitle}>این الگوها توی ذهن من دیده می‌شن:</Text>
         </View>
 
@@ -284,11 +298,11 @@ export const ResultPdfDocument: React.FC<ResultPdfDocumentProps> = ({
               minPresenceAhead={ITEM_MIN_PRESENCE}
               style={styles.itemCard}
             >
-              {/* Number and title in same Text for proper RTL composition */}
-              <Text style={styles.itemTitleText}>
-                <Text style={styles.itemNumberPrefix}>{item.index}</Text>
-                {questionTitle}
-              </Text>
+              {/* Number and title in separate Text blocks for proper RTL composition */}
+              <View style={{ flexDirection: "row-reverse" as const, alignItems: "flex-start" as const, marginBottom: 6 }}>
+                <Text style={[styles.itemNumberPrefix, styles.numberBox]}>{item.index}</Text>
+                <Text style={[styles.itemTitleText, styles.itemTitleTextWrapper]}>{questionTitle}</Text>
+              </View>
               {item.optionLabel && (
                 <Text style={styles.itemOptionLabel}>
                   انتخاب شما: {item.optionLabel}
@@ -300,23 +314,15 @@ export const ResultPdfDocument: React.FC<ResultPdfDocumentProps> = ({
         })}
 
         {/* Closing Note */}
-        <View style={styles.closingNote}>
+        <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.closingNote}>
           <Text style={styles.textSmall}>
             این الگوها به معنی مشکل یا تشخیص نیستند؛ فقط توصیفی از نحوه‌ی کار
             ذهن در مواجهه با فکرهای تکراری‌اند.
           </Text>
         </View>
 
-        {/* Footer with invite link */}
-        <View style={styles.footer}>
-          <View style={styles.inviteLink}>
-            <Text style={styles.inviteText}>{INVITE_LINK_TEXT}</Text>
-            <Text style={styles.inviteUrl}>{INVITE_LINK_URL}</Text>
-          </View>
-          <Text style={{ marginTop: 12, fontSize: 8 }}>
-            آکادمی افران - آزمون سنجش نشخوار فکری
-          </Text>
-        </View>
+        {/* CTA/Invite Link - Only at end, separated from content */}
+        <PdfCtaLink />
         <Text style={styles.pageNumber}>1</Text>
       </Page>
     </Document>

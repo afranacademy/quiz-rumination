@@ -118,7 +118,8 @@ export function DevPanel({ attemptId, participantId, finalizationStatus, complet
           onClick={async () => {
             setIsGeneratingPdf(true);
             try {
-              const pdfDoc = <MyMindPatternPdf firstName="تست" />;
+              const now = new Date();
+              const pdfDoc = <MyMindPatternPdf firstName="تست" now={now} />;
               await buildAndDownloadPdf(pdfDoc, "my-mind-pattern.pdf");
               setLastOperation("PDF v2 generated and downloaded");
               setLastError(null);

@@ -18,13 +18,21 @@ export type CompareSession = {
  * @returns CompareSession if valid and not expired, null if not found or expired
  */
 export async function getCompareSession(token: string): Promise<CompareSession | null> {
+  // Trim token to prevent whitespace issues
+  const trimmedToken = token.trim();
+  
   if (import.meta.env.DEV) {
-    console.log("[getCompareSession] Fetching session via RPC, token:", token.substring(0, 12) + "...");
+    console.log("[getCompareSession] Fetching session via RPC, token:", {
+      raw: token,
+      trimmed: trimmedToken,
+      length: trimmedToken.length,
+      preview: trimmedToken.substring(0, 12) + "..."
+    });
   }
 
   // Use RPC to fetch session (doesn't filter by expiry)
   const { data: rpcData, error: rpcError } = await supabase.rpc("get_compare_session_by_token", {
-    p_token: token,
+    p_token: trimmedToken,
   });
 
   if (rpcError) {

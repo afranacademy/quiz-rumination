@@ -32,13 +32,18 @@ export function QuizPage({ onComplete, onAnswerChange, onExit, isSubmitting = fa
   };
 
   const handleNext = () => {
-    if (isLastQuestion) {
-      if (!isSubmitting) {
-      onComplete(answers);
-      }
-    } else {
+    if (!isLastQuestion) {
       setCurrentQuestion((prev) => prev + 1);
     }
+  };
+
+  const handleCompleteQuiz = () => {
+    if (!isLastQuestion || !hasAnswer || isSubmitting) {
+      return;
+    }
+    console.log("[CTA] click");
+    console.log("[QUIZ] submit started");
+    onComplete(answers);
   };
 
   const handleBack = () => {
@@ -99,6 +104,7 @@ export function QuizPage({ onComplete, onAnswerChange, onExit, isSubmitting = fa
       <div className="fixed bottom-0 left-0 right-0 bg-white/10 backdrop-blur-2xl border-t border-white/20 p-4 sm:hidden z-50 shadow-2xl shadow-black/20" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
         <div className="max-w-md mx-auto flex items-center justify-between gap-3">
           <Button
+            type="button"
             variant="outline"
             size="lg"
             onClick={handleBack}
@@ -108,15 +114,28 @@ export function QuizPage({ onComplete, onAnswerChange, onExit, isSubmitting = fa
             قبلی
           </Button>
           
-          <Button
-            size="lg"
-            onClick={handleNext}
-            disabled={!hasAnswer || isSubmitting}
-            className="flex-1 rounded-2xl min-h-[44px] bg-primary/90 hover:bg-primary backdrop-blur-sm shadow-lg shadow-primary/20 border border-primary/30 disabled:opacity-40"
-          >
-            {isLastQuestion ? (isSubmitting ? "در حال ارسال..." : "مشاهده نتیجه") : "بعدی"}
-            {!isLastQuestion && <ChevronLeft className="w-5 h-5 mr-2" />}
-          </Button>
+          {isLastQuestion ? (
+            <Button
+              type="button"
+              size="lg"
+              disabled={!hasAnswer || isSubmitting}
+              onClick={handleCompleteQuiz}
+              className="flex-1 rounded-2xl min-h-[44px] bg-primary/90 hover:bg-primary backdrop-blur-sm shadow-lg shadow-primary/20 border border-primary/30 disabled:opacity-40"
+            >
+              {isSubmitting ? "در حال ارسال..." : "مشاهده نتیجه"}
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="lg"
+              onClick={handleNext}
+              disabled={!hasAnswer || isSubmitting}
+              className="flex-1 rounded-2xl min-h-[44px] bg-primary/90 hover:bg-primary backdrop-blur-sm shadow-lg shadow-primary/20 border border-primary/30 disabled:opacity-40"
+            >
+              بعدی
+              <ChevronLeft className="w-5 h-5 mr-2" />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -124,6 +143,7 @@ export function QuizPage({ onComplete, onAnswerChange, onExit, isSubmitting = fa
       <div className="hidden sm:block max-w-md mx-auto mt-6">
         <div className="flex items-center justify-between gap-4">
           <Button
+            type="button"
             variant="outline"
             size="lg"
             onClick={handleBack}
@@ -133,17 +153,31 @@ export function QuizPage({ onComplete, onAnswerChange, onExit, isSubmitting = fa
             قبلی
           </Button>
           
-          <Button
-            size="lg"
-            onClick={handleNext}
-            disabled={!hasAnswer || isSubmitting}
-            className="rounded-2xl min-h-[44px] bg-primary/90 hover:bg-primary backdrop-blur-sm shadow-lg shadow-primary/20 border border-primary/30 disabled:opacity-40"
-          >
-            {isLastQuestion ? (isSubmitting ? "در حال ارسال..." : "مشاهده نتیجه") : "بعدی"}
-            {!isLastQuestion && <ChevronLeft className="w-5 h-5 mr-2" />}
-          </Button>
+          {isLastQuestion ? (
+            <Button
+              type="button"
+              size="lg"
+              disabled={!hasAnswer || isSubmitting}
+              onClick={handleCompleteQuiz}
+              className="rounded-2xl min-h-[44px] bg-primary/90 hover:bg-primary backdrop-blur-sm shadow-lg shadow-primary/20 border border-primary/30 disabled:opacity-40"
+            >
+              {isSubmitting ? "در حال ارسال..." : "مشاهده نتیجه"}
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="lg"
+              onClick={handleNext}
+              disabled={!hasAnswer || isSubmitting}
+              className="rounded-2xl min-h-[44px] bg-primary/90 hover:bg-primary backdrop-blur-sm shadow-lg shadow-primary/20 border border-primary/30 disabled:opacity-40"
+            >
+              بعدی
+              <ChevronLeft className="w-5 h-5 mr-2" />
+            </Button>
+          )}
         </div>
       </div>
     </div>
   );
 }
+

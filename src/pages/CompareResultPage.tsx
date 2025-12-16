@@ -13,6 +13,7 @@ import {
   generateComparePdfFilename,
 } from "@/utils/pdfGenerator";
 import { ComparePdfDocument } from "@/pdf/ComparePdfDocument";
+import { ComparePdfCompactDocument } from "@/pdf/templates/ComparePdfCompactDocument";
 import { computeSimilarity } from "@/features/compare/computeSimilarity";
 import { useAnonAuth } from "@/hooks/useAnonAuth";
 import { trackShareEvent } from "@/lib/trackShareEvent";
@@ -2126,6 +2127,7 @@ export default function CompareResultPage() {
     setIsGeneratingPdf(true);
     try {
       const filename = generateComparePdfFilename(nameA, nameB);
+      const now = new Date();
       
       const pdfDocument = (
         <ComparePdfDocument
@@ -2159,6 +2161,7 @@ export default function CompareResultPage() {
           LEVEL_LABELS={LEVEL_LABELS}
           SIMILARITY_LABELS={SIMILARITY_LABELS}
           SAFETY_STATEMENT={SAFETY_STATEMENT}
+          now={now}
         />
       );
 
@@ -2197,9 +2200,11 @@ export default function CompareResultPage() {
     setIsGeneratingPdf(true);
     try {
       const filename = generateComparePdfFilename(nameA, nameB);
+      const now = new Date();
       
+      // Use compact PDF for production (2-3 pages)
       const pdfDocument = (
-        <ComparePdfDocument
+        <ComparePdfCompactDocument
           nameA={nameA}
           nameB={nameB}
           comparison={comparison}
@@ -2214,22 +2219,17 @@ export default function CompareResultPage() {
           differences={differences}
           getDimensionNameForSnapshot={getDimensionNameForSnapshot}
           generateMindSnapshot={generateMindSnapshot}
-          generateCentralInterpretation={generateCentralInterpretation}
-          generateNeutralBlendedInterpretation={generateNeutralBlendedInterpretation}
-          generateMisunderstandingLoop={generateMisunderstandingLoop}
-          getCombinedContextualTriggers={getCombinedContextualTriggers}
-          getSeenUnseenConsequences={getSeenUnseenConsequences}
-          generateEmotionalExperience={generateEmotionalExperience}
-          getConversationStarters={getConversationStarters}
           getMisunderstandingRiskText={getMisunderstandingRiskText}
           getSimilarityComplementarySentence={getSimilarityComplementarySentence}
           getAlignmentLabel={getAlignmentLabel}
           generateDimensionSummary={generateDimensionSummary}
+          getConversationStarters={getConversationStarters}
           DIMENSION_LABELS={DIMENSION_LABELS}
           DIMENSION_DEFINITIONS={DIMENSION_DEFINITIONS}
           LEVEL_LABELS={LEVEL_LABELS}
           SIMILARITY_LABELS={SIMILARITY_LABELS}
           SAFETY_STATEMENT={SAFETY_STATEMENT}
+          now={now}
         />
       );
 
