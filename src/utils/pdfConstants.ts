@@ -8,5 +8,7 @@
  */
 export const INVITE_LINK_TEXT =
   "اگر دوست داری الگوی ذهنی خودت رو دقیق‌تر بشناسی،\nمی‌تونی این آزمون سنجش نشخوار فکری رو تکمیل کنی:";
-export const INVITE_LINK_URL = "https://zaya.io/testruminationnewtest";
+import { TEST_LINK } from "@/constants/links";
+
+export const INVITE_LINK_URL = TEST_LINK;
 

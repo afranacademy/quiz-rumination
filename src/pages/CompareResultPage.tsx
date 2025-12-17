@@ -1,11 +1,13 @@
-import { useEffect, useState, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/app/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/card";
 import { RefreshCw, Link as LinkIcon, Share2, BookOpen, Download, FileText } from "lucide-react";
 import { toast } from "sonner";
-import { copyText, shareOrCopyText } from "@/features/share/shareClient";
+import { copyText } from "@/features/share/shareClient";
+import { shareInvite, copyInvite } from "@/utils/inviteCta";
+import { TEST_LINK } from "@/constants/links";
 import {
   generatePdfBlob,
   downloadPdf,
@@ -22,13 +24,12 @@ import { createCompareInvite } from "@/features/compare/createCompareInvite";
 import { supersedePendingCompareToken } from "@/features/compare/supersedePendingCompareToken";
 import { getLatestCompletedAttempt } from "@/features/compare/getLatestCompletedAttempt";
 import { LINKS } from "@/config/links";
+import { COURSE_LINK } from "@/constants/links";
 import {
   DIMENSION_DEFINITIONS,
   getAlignmentLabel,
   getLargestDifferenceDimension,
   getLargestSimilarityDimension,
-  generateCentralInterpretation,
-  generateNeutralBlendedInterpretation,
   getContextualTriggers,
   getCombinedContextualTriggers,
   getSeenUnseenConsequences,
@@ -38,19 +39,20 @@ import {
   shouldShowCTA,
   generateSafeShareText,
   getMisunderstandingRisk,
-  getMisunderstandingRiskText,
-  getTopDimensionForPerson,
-  generateMindSnapshot,
-  generateMisunderstandingLoop,
-  generateEmotionalExperience,
-  getSimilarityComplementarySentence,
-  generateDimensionSummary,
-  getSimilaritiesAndDifferences,
   getConversationStarters,
 } from "@/features/compare/relationalContent";
+import { aggregateCompareInsights } from "@/features/compare/aggregateCompareInsights";
 import type { DimensionKey } from "@/domain/quiz/types";
-import { levelOfDimension } from "@/domain/quiz/dimensions";
+import { DIMENSIONS, levelOfDimension } from "@/domain/quiz/dimensions";
 import type { Comparison } from "@/domain/compare/types";
+import { buildCompareState } from "@/features/compare/buildCompareState";
+import { getCompareNarratives } from "@/features/compare/getCompareNarratives";
+import { getTopDimensionForPerson } from "@/features/compare/getTopDimensionForPerson";
+// Template selection functions no longer needed - using narratives directly
+import { normalizeDisplayName } from "@/features/compare/normalizeDisplayName";
+import { generatePerPersonProfile } from "@/features/compare/generatePerPersonProfile";
+import { buildCompareShareText, type RenderedCompareText } from "@/features/compare/export/compareTextExport";
+import { useMemo } from "react";
 
 type CompareSession = {
   id: string;
@@ -149,7 +151,7 @@ function parseDimensionScores(
   raw: unknown,
   context: string
 ): DimensionScoresResult {
-  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
+  const dimensionKeys = DIMENSIONS;
   const scores: Record<DimensionKey, number> = {} as Record<DimensionKey, number>;
   const validDimensions: DimensionKey[] = [];
   let hasUnknown = false;
@@ -259,7 +261,7 @@ function buildComparison(
   const SIMILAR_THRESHOLD = 0.8;
   const DIFFERENT_THRESHOLD = 1.6;
 
-  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
+  const dimensionKeys = DIMENSIONS;
 
   const dimensions: Record<DimensionKey, DimensionComparison> = {} as Record<
     DimensionKey,
@@ -485,16 +487,170 @@ export default function CompareResultPage() {
   } | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const compareContentRef = useRef<HTMLDivElement>(null);
+  // Refs to store function references for use in useEffect hooks (which must be before early returns)
+  const loadCompareResultRef = useRef<(() => Promise<void>) | null>(null);
+  const stopPollingRef = useRef<(() => void) | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const maxPollingTime = 60000; // 60 seconds
   const pollingInterval = 2000; // 2 seconds
+
+  // Build CompareState for template-based narrative engine
+  // Must be called unconditionally before any early returns (React hooks rule)
+  const compareState = useMemo(() => {
+    if (!comparison || !attemptA || !attemptB) return null;
+    
+    // Build names for CompareState
+    const buildDisplayName = (firstName: string | null, lastName: string | null, fallback: string): string => {
+      if (!firstName || (typeof firstName === "string" && firstName.trim() === "") || firstName === "نفر اول" || firstName === "نفر دوم") {
+        return fallback;
+      }
+      const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+      return fullName || fallback;
+    };
+    
+    const nameARaw = buildDisplayName(attemptA.user_first_name, attemptA.user_last_name, "نفر اول");
+    const nameBRaw = buildDisplayName(attemptB.user_first_name, attemptB.user_last_name, "نفر دوم");
+    const nameA = normalizeDisplayName(nameARaw);
+    const nameB = normalizeDisplayName(nameBRaw);
+    
+    return buildCompareState({
+      comparison,
+      nameA,
+      nameB,
+      // styleDeltaPerDimension: undefined (if not already computed, will default to false)
+    });
+  }, [comparison, attemptA, attemptB]);
   
   // DEV: Track RPC data for diagnostics
   const [devRpcData, setDevRpcData] = useState<any>(null);
   const [devLastError, setDevLastError] = useState<any>(null);
   
-  // CRITICAL: Declare dimensionKeys at component level to avoid TDZ
-  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"] as const;
+  // CRITICAL: Use canonical DIMENSIONS constant
+  const dimensionKeys = DIMENSIONS;
+
+  // Compute display names early (before early returns) - safe fallback if data missing
+  const nameA = useMemo(() => {
+    if (!attemptA) return "نفر اول";
+    const buildDisplayName = (firstName: string | null, lastName: string | null, fallback: string): string => {
+      if (!firstName || (typeof firstName === "string" && firstName.trim() === "") || firstName === "نفر اول" || firstName === "نفر دوم") {
+        return fallback;
+      }
+      const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+      return fullName || fallback;
+    };
+    const nameARaw = buildDisplayName(attemptA.user_first_name, attemptA.user_last_name, "نفر اول");
+    return normalizeDisplayName(nameARaw);
+  }, [attemptA]);
+
+  const nameB = useMemo(() => {
+    if (!attemptB) return "نفر دوم";
+    const buildDisplayName = (firstName: string | null, lastName: string | null, fallback: string): string => {
+      if (!firstName || (typeof firstName === "string" && firstName.trim() === "") || firstName === "نفر اول" || firstName === "نفر دوم") {
+        return fallback;
+      }
+      const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+      return fullName || fallback;
+    };
+    const nameBRaw = buildDisplayName(attemptB.user_first_name, attemptB.user_last_name, "نفر دوم");
+    return normalizeDisplayName(nameBRaw);
+  }, [attemptB]);
+
+  // Compute aggregated insights from CompareState (canonical source)
+  // Gate: Only compute if compareState is ready (not null and has all dimensions)
+  const insights = useMemo(() => {
+    if (!compareState) {
+      return {
+        similarDims: [],
+        differentDims: [],
+        veryDifferentDims: [],
+        similarityLabel: "متوسط" as const,
+        riskLabel: "متوسط" as const,
+        riskCountVeryDifferent: 0,
+      };
+    }
+    // Check if compareState is ready: must have all dimensions with valid flags
+    const isReady = DIMENSIONS.every(key => {
+      const dimState = compareState.dimensions[key];
+      return dimState && dimState.valid !== undefined;
+    });
+    if (!isReady) {
+      return {
+        similarDims: [],
+        differentDims: [],
+        veryDifferentDims: [],
+        similarityLabel: "متوسط" as const,
+        riskLabel: "متوسط" as const,
+        riskCountVeryDifferent: 0,
+      };
+    }
+    return aggregateCompareInsights(compareState);
+  }, [compareState]);
+
+  // Build narratives from template engine (single source of truth for UI and PDF)
+  const narratives = useMemo(() => {
+    if (!compareState) {
+      return null;
+    }
+    // Check if compareState is ready: must have all dimensions with valid flags
+    const isReady = DIMENSIONS.every(key => {
+      const dimState = compareState.dimensions[key];
+      return dimState && dimState.valid !== undefined;
+    });
+    if (!isReady) {
+      return null;
+    }
+    return getCompareNarratives(compareState, { A: nameA, B: nameB });
+  }, [compareState, nameA, nameB]);
+
+  // DEV-only sanity check: verify consistency between mental map and insights
+  if (import.meta.env.DEV && compareState && insights) {
+    const mentalMapHasDifferences = DIMENSIONS.some(key => {
+      const dimState = compareState.dimensions[key];
+      if (!dimState) return false;
+      return dimState.relation === "different" || dimState.relation === "very_different";
+    });
+    const insightsHasNoDifferences = insights.veryDifferentDims.length === 0 && insights.differentDims.length === 0;
+    
+    if (mentalMapHasDifferences && insightsHasNoDifferences) {
+      console.error("[CompareResultPage] SANITY CHECK FAILED: Mental map shows differences but insights shows none", {
+        mentalMapRelations: DIMENSIONS.map(key => ({
+          dimension: key,
+          relation: compareState.dimensions[key]?.relation,
+        })),
+        insights: {
+          similarDims: insights.similarDims,
+          differentDims: insights.differentDims,
+          veryDifferentDims: insights.veryDifferentDims,
+        },
+        // No PII - only dimension keys and relations
+      });
+    }
+  }
+
+  // Build RenderedCompareText for export (use narratives if available for consistency)
+  // Gate: Only compute if narratives and data are ready
+  const renderedCompareText = useMemo((): RenderedCompareText | null => {
+    if (!narratives || !attemptA || !attemptB) return null;
+
+    return {
+      nameA,
+      nameB,
+      similarityLabel: narratives.meta.similarityLabel,
+      riskLabel: narratives.meta.riskLabel,
+      dominantDimension: narratives.meta.dominantDimension,
+      dominantDifferenceText: narratives.dominantDifferenceText,
+      perPersonA: generatePerPersonProfile(nameA, attemptA.dimension_scores),
+      perPersonB: generatePerPersonProfile(nameB, attemptB.dimension_scores),
+      mentalMap: narratives.mentalMap,
+      keyDifferencesText: narratives.keyDifferencesText,
+      similaritiesList: insights.similarDims,
+      differencesList: [...insights.veryDifferentDims, ...insights.differentDims],
+      loopText: narratives.loopText,
+      triggersList: narratives.triggers.list,
+      feltExperienceText: narratives.feltExperienceText,
+      safetyText: narratives.safetyText,
+    };
+  }, [narratives, attemptA, attemptB, nameA, nameB, insights]);
 
   // DEV: Log component mount
   useEffect(() => {
@@ -507,6 +663,19 @@ export default function CompareResultPage() {
       });
     }
   }, [token]);
+
+  // Main data loading useEffect - must be before any early returns (React hooks rule)
+  // Functions are stored in refs (defined later) to avoid dependency issues
+  useEffect(() => {
+    if (loadCompareResultRef.current) {
+      loadCompareResultRef.current();
+      return () => {
+        if (stopPollingRef.current) {
+          stopPollingRef.current();
+        }
+      };
+    }
+  }, [token]); // token is the actual dependency
 
   // Load compare payload using RPC (bypasses RLS)
   const loadComparePayload = async (): Promise<ComparePayloadRPCResponse | null> => {
@@ -1411,6 +1580,8 @@ export default function CompareResultPage() {
       pollingIntervalRef.current = null;
     }
   };
+  // Store function reference in ref for use in useEffect above (before early returns)
+  stopPollingRef.current = stopPolling;
 
   const handleRefresh = () => {
     stopPolling();
@@ -1419,13 +1590,8 @@ export default function CompareResultPage() {
     loadCompareResult();
   };
 
-  useEffect(() => {
-    loadCompareResult();
-
-    return () => {
-      stopPolling();
-    };
-  }, [token]);
+  // Store function reference in ref for use in useEffect above (before early returns)
+  loadCompareResultRef.current = loadCompareResult;
 
   if (loading && !session) {
     // #region agent log - Safety: Log state branch
@@ -1613,7 +1779,8 @@ export default function CompareResultPage() {
       hasComparison: !!comparison,
     });
     // #endregion
-    const nameA = attemptA?.user_first_name || "شما";
+    const nameARaw = attemptA?.user_first_name || "شما";
+    const nameA = normalizeDisplayName(nameARaw);
     
     if (import.meta.env.DEV) {
       console.log("[CompareResultPage] 🔍 Pending state - computed nameA:", {
@@ -1622,7 +1789,7 @@ export default function CompareResultPage() {
         attemptA_user_last_name: attemptA?.user_last_name,
       });
     }
-    const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
+    const dimensionKeys = DIMENSIONS;
     
     const handleCreateInvite = async () => {
       // Try to get attempt A ID from session or attemptA
@@ -1869,43 +2036,8 @@ export default function CompareResultPage() {
     );
   }
 
-  // Compute display names: first_name + last_name if exists
-  // Only apply fallback if name is truly empty (null, undefined, or empty string after trim)
-  // Check for real names vs fallback text to avoid double fallback
-  const buildDisplayName = (firstName: string | null, lastName: string | null, fallback: string): string => {
-    // Check if firstName is null, undefined, empty string, or fallback text
-    if (!firstName || (typeof firstName === "string" && firstName.trim() === "") || firstName === "نفر اول" || firstName === "نفر دوم") {
-      if (import.meta.env.DEV) {
-        console.log("[CompareResultPage] 🔍 buildDisplayName: Using fallback", {
-          firstName,
-          lastName,
-          fallback,
-          firstNameType: typeof firstName,
-          firstNameIsNull: firstName === null,
-          firstNameIsUndefined: firstName === undefined,
-          firstNameIsEmpty: firstName === "",
-        });
-      }
-      return fallback;
-    }
-    const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
-    const result = fullName || fallback;
-    if (import.meta.env.DEV) {
-      console.log("[CompareResultPage] 🔍 buildDisplayName: Built name", {
-        firstName,
-        lastName,
-        fullName,
-        result,
-        fallback,
-      });
-    }
-    return result;
-  };
-  
-  const nameA = buildDisplayName(attemptA.user_first_name, attemptA.user_last_name, "نفر اول");
-  const nameB = buildDisplayName(attemptB.user_first_name, attemptB.user_last_name, "نفر دوم");
-  
-  if (import.meta.env.DEV) {
+  // Note: nameA and nameB are already computed in useMemo above (before early returns)
+  if (import.meta.env.DEV && attemptA && attemptB) {
     console.log("[CompareResultPage] 🔍 Computed display names (FINAL):", {
       token: token ? token.substring(0, 12) + "..." : "N/A",
       attempt_a_id: attemptA.id,
@@ -1957,24 +2089,14 @@ export default function CompareResultPage() {
     },
   });
 
-  // Get similarities and differences - filter out unknown dimensions (null-safe)
+  // Note: similarities, differences, and renderedCompareText are already computed in useMemo above (before early returns)
+  
+  // Get similarities and differences - filter out unknown dimensions (null-safe) for risk calculation
   const validDimensionsForComparison = dimensionKeys.filter(key => {
     const dim = comparison?.dimensions?.[key];
     return dim && !isNaN(dim.delta ?? NaN) && !isNaN(dim.aScore ?? NaN) && !isNaN(dim.bScore ?? NaN);
   });
 
-  const dimensionsForComparison: Record<DimensionKey, { relation: "similar" | "different" | "very_different"; delta: number }> = {} as any;
-  for (const key of validDimensionsForComparison) {
-    const dim = comparison?.dimensions?.[key];
-    if (dim) {
-      dimensionsForComparison[key] = {
-        relation: dim.relation,
-        delta: dim.delta,
-      };
-    }
-  }
-
-  const { similarities, differences } = getSimilaritiesAndDifferences(dimensionsForComparison);
   
   // Calculate misunderstanding risk - only from valid dimensions
   // Build validDimensionsForRisk BEFORE using it (null-safe)
@@ -1991,9 +2113,11 @@ export default function CompareResultPage() {
   // Calculate misunderstanding risk - only from valid dimensions
   const misunderstandingRisk = getMisunderstandingRisk(validDimensionsForRisk);
 
-  // Get top dimensions for each person (may be null if all dimensions are unknown)
-  const topDimensionA = getTopDimensionForPerson(attemptA.dimension_scores);
-  const topDimensionB = getTopDimensionForPerson(attemptB.dimension_scores);
+  // CompareState is already built at the top level (unconditionally) to satisfy React hooks rules
+
+  // Get top dimensions for each person using CompareState (canonical source)
+  const topDimensionA = compareState ? getTopDimensionForPerson(compareState, "A") : "stickiness";
+  const topDimensionB = compareState ? getTopDimensionForPerson(compareState, "B") : "stickiness";
 
   if (import.meta.env.DEV) {
     console.log("[CompareResultPage] Top dimensions:", {
@@ -2071,21 +2195,56 @@ export default function CompareResultPage() {
   };
 
 
-  // Build share text (pattern-based, no numbers, safe to forward)
-  const buildShareText = (): string => {
-    return generateSafeShareText(
-      nameA,
-      nameB,
-      overallSimilarity,
-      largestDiff?.key || null
-    );
+  const handleShareShareText = async () => {
+    if (!compareState || !renderedCompareText) {
+      toast.error("اطلاعات کافی برای اشتراک‌گذاری موجود نیست");
+      return;
+    }
+
+    try {
+      const contentText = buildCompareShareText(compareState, renderedCompareText);
+      // Note: buildCompareShareText already includes test invite at the end, so we pass it without shareInvite wrapper
+      const { shareOrCopyText } = await import("@/features/share/shareClient");
+      const result = await shareOrCopyText({
+        title: "ذهن ما کنار هم",
+        text: contentText,
+      });
+
+      if (result.ok) {
+        if (result.method === "share") {
+          toast.success("ارسال شد");
+        } else {
+          toast.success("متن کپی شد");
+        }
+        // Track share_text action
+        await trackShareEvent({
+          cardType: "compare_minds",
+          action: "share_text",
+          compareSessionId: session?.id ?? null,
+          inviteToken: token ?? null,
+        });
+      } else if (result.error !== "canceled") {
+        toast.error("خطا در اشتراک‌گذاری");
+      }
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.error("[CompareResultPage] ❌ Error sharing text:", error);
+      }
+      toast.error("خطا در اشتراک‌گذاری");
+    }
   };
 
   const handleCopyShareText = async () => {
+    if (!compareState || !renderedCompareText) {
+      toast.error("اطلاعات کافی برای کپی موجود نیست");
+      return;
+    }
+
     try {
-      const shareText = buildShareText();
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(shareText);
+      const contentText = buildCompareShareText(compareState, renderedCompareText);
+      const success = await copyText(contentText);
+      
+      if (success) {
         if (import.meta.env.DEV) {
           console.log("[CompareResultPage] ✅ Share text copied to clipboard");
         }
@@ -2098,22 +2257,7 @@ export default function CompareResultPage() {
         });
         toast.success("متن کپی شد");
       } else {
-        const success = await copyText(shareText);
-        if (import.meta.env.DEV) {
-          console.log("[CompareResultPage] Share text copy (fallback):", success ? "success" : "failed");
-        }
-        if (success) {
-          // Track share_text action
-          await trackShareEvent({
-            cardType: "compare_minds",
-            action: "share_text",
-            compareSessionId: session?.id ?? null,
-            inviteToken: token ?? null,
-          });
-          toast.success("متن کپی شد");
-    } else {
-          toast.error("خطا در کپی متن");
-        }
+        toast.error("خطا در کپی متن");
       }
     } catch (error) {
       if (import.meta.env.DEV) {
@@ -2125,7 +2269,7 @@ export default function CompareResultPage() {
 
   // PDF handlers
   const handleDownloadPdf = async () => {
-    if (!comparison || !attemptA || !attemptB) {
+    if (!comparison || !attemptA || !attemptB || !narratives) {
       toast.error("خطا در تولید PDF: داده‌های کافی موجود نیست");
       return;
     }
@@ -2137,36 +2281,9 @@ export default function CompareResultPage() {
       
       const pdfDocument = (
         <ComparePdfDocument
+          narratives={narratives}
           nameA={nameA}
           nameB={nameB}
-          comparison={comparison}
-          attemptA={attemptA}
-          attemptB={attemptB}
-          topDimensionA={topDimensionA || undefined}
-          topDimensionB={topDimensionB || undefined}
-          overallSimilarity={overallSimilarity}
-          misunderstandingRisk={misunderstandingRisk}
-          largestDiff={largestDiff || undefined}
-          similarities={similarities}
-          differences={differences}
-          getDimensionNameForSnapshot={getDimensionNameForSnapshot}
-          generateMindSnapshot={generateMindSnapshot}
-          generateCentralInterpretation={generateCentralInterpretation}
-          generateNeutralBlendedInterpretation={generateNeutralBlendedInterpretation}
-          generateMisunderstandingLoop={generateMisunderstandingLoop}
-          getCombinedContextualTriggers={getCombinedContextualTriggers}
-          getSeenUnseenConsequences={getSeenUnseenConsequences}
-          generateEmotionalExperience={generateEmotionalExperience}
-          getConversationStarters={getConversationStarters}
-          getMisunderstandingRiskText={getMisunderstandingRiskText}
-          getSimilarityComplementarySentence={getSimilarityComplementarySentence}
-          getAlignmentLabel={getAlignmentLabel}
-          generateDimensionSummary={generateDimensionSummary}
-          DIMENSION_LABELS={DIMENSION_LABELS}
-          DIMENSION_DEFINITIONS={DIMENSION_DEFINITIONS}
-          LEVEL_LABELS={LEVEL_LABELS}
-          SIMILARITY_LABELS={SIMILARITY_LABELS}
-          SAFETY_STATEMENT={SAFETY_STATEMENT}
           now={now}
         />
       );
@@ -2198,7 +2315,7 @@ export default function CompareResultPage() {
   };
 
   const handleSharePdf = async () => {
-    if (!comparison || !attemptA || !attemptB) {
+    if (!comparison || !attemptA || !attemptB || !narratives) {
       toast.error("خطا در تولید PDF: داده‌های کافی موجود نیست");
       return;
     }
@@ -2211,30 +2328,9 @@ export default function CompareResultPage() {
       // Use compact PDF for production (2-3 pages)
       const pdfDocument = (
         <ComparePdfCompactDocument
+          narratives={narratives}
           nameA={nameA}
           nameB={nameB}
-          comparison={comparison}
-          attemptA={attemptA}
-          attemptB={attemptB}
-          topDimensionA={topDimensionA || undefined}
-          topDimensionB={topDimensionB || undefined}
-          overallSimilarity={overallSimilarity}
-          misunderstandingRisk={misunderstandingRisk}
-          largestDiff={largestDiff || undefined}
-          similarities={similarities}
-          differences={differences}
-          getDimensionNameForSnapshot={getDimensionNameForSnapshot}
-          generateMindSnapshot={generateMindSnapshot}
-          getMisunderstandingRiskText={getMisunderstandingRiskText}
-          getSimilarityComplementarySentence={getSimilarityComplementarySentence}
-          getAlignmentLabel={getAlignmentLabel}
-          generateDimensionSummary={generateDimensionSummary}
-          getConversationStarters={getConversationStarters}
-          DIMENSION_LABELS={DIMENSION_LABELS}
-          DIMENSION_DEFINITIONS={DIMENSION_DEFINITIONS}
-          LEVEL_LABELS={LEVEL_LABELS}
-          SIMILARITY_LABELS={SIMILARITY_LABELS}
-          SAFETY_STATEMENT={SAFETY_STATEMENT}
           now={now}
         />
       );
@@ -2277,7 +2373,7 @@ export default function CompareResultPage() {
   };
 
   // Course URL - from single source of truth
-  const COURSE_URL = LINKS.MIND_CHATTER_COURSE;
+  const COURSE_URL = COURSE_LINK;
 
   // #region agent log - Safety: Log state branch
   if (import.meta.env.DEV) {
@@ -2342,77 +2438,56 @@ export default function CompareResultPage() {
 
             {/* Risk explanation text */}
             <p className="text-center text-sm text-foreground/80 leading-relaxed">
-              {getMisunderstandingRiskText(misunderstandingRisk)}
+              {narratives?.meta.riskLabel || ""}
             </p>
 
-            {/* Central sentence */}
-            {(() => {
-              const maxDelta = largestDiff?.delta || 0;
-              if (maxDelta < 0.8) {
-                // All aligned - show similarity message
-                const largestSimilar = getLargestSimilarityDimension({
-                  stickiness: { delta: comparison?.dimensions?.stickiness?.delta ?? 0, relation: comparison?.dimensions?.stickiness?.relation ?? "similar" },
-                  pastBrooding: { delta: comparison?.dimensions?.pastBrooding?.delta ?? 0, relation: comparison?.dimensions?.pastBrooding?.relation ?? "similar" },
-                  futureWorry: { delta: comparison?.dimensions?.futureWorry?.delta ?? 0, relation: comparison?.dimensions?.futureWorry?.relation ?? "similar" },
-                  interpersonal: { delta: comparison?.dimensions?.interpersonal?.delta ?? 0, relation: comparison?.dimensions?.interpersonal?.relation ?? "similar" },
-                });
-                
-                if (largestSimilar) {
-                  return (
-                    <p className="text-center text-base text-foreground/90 leading-relaxed font-medium">
-                      بزرگ‌ترین همسویی ذهنی شما در: {getDimensionNameForSnapshot(largestSimilar)}
-                    </p>
-                  );
-                } else {
-                  return (
-                    <p className="text-center text-base text-foreground/90 leading-relaxed font-medium">
-                      در این مقایسه، تفاوت برجسته‌ای دیده نمی‌شود؛ بیشتر همسویی مشاهده می‌شود.
-                    </p>
-                  );
-                }
-              } else if (largestDiff) {
-                return (
-                  <p className="text-center text-base text-foreground/90 leading-relaxed font-medium">
-                    بزرگ‌ترین تفاوت ذهنی شما در: {getDimensionNameForSnapshot(largestDiff.key)}
-                  </p>
-                );
-              }
-              return null;
-            })()}
+            {/* Central sentence - Dominant Difference (Phase 1 template) */}
+            {narratives ? (
+              <div className="space-y-2">
+                <p className="text-center text-base text-foreground/90 leading-relaxed font-medium">
+                  {narratives.dominantDifference.headline}
+                </p>
+                <p className="text-center text-base text-foreground/90 leading-relaxed font-medium whitespace-pre-line">
+                  {narratives.dominantDifferenceText}
+                </p>
+              </div>
+            ) : (
+              <p className="text-center text-base text-foreground/90 leading-relaxed font-medium">
+                {largestDiff ? (largestDiff.tied 
+                  ? `یکی از بزرگ‌ترین تفاوت‌های ذهنی شما در: ${getDimensionNameForSnapshot(largestDiff.key)}`
+                  : `بزرگ‌ترین تفاوت ذهنی شما در: ${getDimensionNameForSnapshot(largestDiff.key)}`) : null}
+              </p>
+            )}
 
             {/* Complementary sentence */}
             <p className="text-center text-sm text-foreground/80 leading-relaxed">
-              {getSimilarityComplementarySentence(overallSimilarity)}
+              {narratives?.similarityComplementarySentence || ""}
             </p>
           </CardContent>
         </Card>
 
         {/* SECTION 3: MIND PROFILES FOR EACH PERSON */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {topDimensionA && (
-            <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
-              <CardHeader>
-                <CardTitle className="text-lg">سبک ذهنی {nameA}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-line">
-                  {generateMindSnapshot(nameA, topDimensionA, attemptA.dimension_scores)}
-                </p>
-              </CardContent>
-            </Card>
-          )}
-          {topDimensionB && (
-            <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
-              <CardHeader>
-                <CardTitle className="text-lg">سبک ذهنی {nameB}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-line">
-                  {generateMindSnapshot(nameB, topDimensionB, attemptB.dimension_scores)}
-                </p>
-          </CardContent>
-        </Card>
-          )}
+          <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
+            <CardHeader>
+              <CardTitle className="text-lg">سبک ذهنی {nameA}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-line">
+                {generatePerPersonProfile(nameA, attemptA.dimension_scores)}
+              </p>
+            </CardContent>
+          </Card>
+          <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
+            <CardHeader>
+              <CardTitle className="text-lg">سبک ذهنی {nameB}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-line">
+                {generatePerPersonProfile(nameB, attemptB.dimension_scores)}
+              </p>
+            </CardContent>
+          </Card>
         </div>
 
         {/* SECTION 4: 4-DIMENSION MENTAL MAP */}
@@ -2472,12 +2547,14 @@ export default function CompareResultPage() {
             </div>
                     </div>
 
-                    {/* Dimension summary */}
+                    {/* Dimension summary - Mental Map (Phase 2 template) */}
                     <div className="pt-3 border-t border-white/10">
-                      <p className="text-xs text-foreground/80 leading-relaxed">
+                      <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-line">
                         {isUnknown 
                           ? "این بُعد قابل محاسبه نیست (داده ناقص است)."
-                          : generateDimensionSummary(dim.relation, dim.aLevel, dim.bLevel)
+                          : narratives 
+                            ? narratives.mentalMapByDimension[key] || ""
+                            : ""
                         }
                       </p>
                     </div>
@@ -2491,15 +2568,15 @@ export default function CompareResultPage() {
         {/* SECTION 5: SIMILARITIES AND DIFFERENCES */}
         <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
           <CardHeader>
-            <CardTitle className="text-center text-xl">شباهت‌ها و تفاوت‌های کلیدی</CardTitle>
+            <CardTitle className="text-center text-xl">جمع‌بندی شباهت و تفاوت</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             {/* Similarities */}
             <div>
               <h3 className="text-base font-medium text-foreground mb-3">شباهت‌ها</h3>
-              {similarities.length > 0 ? (
+              {insights.similarDims.length > 0 ? (
                 <ul className="space-y-2">
-                  {similarities.map((key) => (
+                  {insights.similarDims.map((key) => (
                     <li key={key} className="flex items-start gap-2 text-sm text-foreground/80">
                       <span className="text-green-400 shrink-0 mt-1">•</span>
                       <span>{DIMENSION_LABELS[key]}</span>
@@ -2507,21 +2584,34 @@ export default function CompareResultPage() {
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-foreground/70 italic">
-                  همسویی کامل کمتر دیده می‌شود؛ این نشانه‌ی تفاوت سبک‌هاست، نه مشکل.
-                </p>
+                <div className="space-y-2">
+                  <p className="text-sm text-foreground/70 italic">
+                    در این نتایج، همسویی کامل کمتر دیده می‌شود؛ این نشانه‌ی تفاوت سبک‌هاست، نه مشکل.
+                  </p>
+                  <p className="text-sm text-foreground/70">
+                    شباهت‌ها اینجا بیشتر در «ریتم و سبک پردازش» دیده می‌شوند، نه الزاماً در «سطح شدت».
+                  </p>
+                </div>
               )}
             </div>
 
             {/* Differences */}
             <div>
               <h3 className="text-base font-medium text-foreground mb-3">تفاوت‌ها</h3>
-              {differences.length > 0 ? (
+              {insights.veryDifferentDims.length + insights.differentDims.length > 0 ? (
                 <ul className="space-y-2">
-                  {differences.map((key) => (
+                  {/* Show very_different dimensions first */}
+                  {insights.veryDifferentDims.map((key) => (
+                    <li key={key} className="flex items-start gap-2 text-sm text-foreground/80">
+                      <span className="text-red-400 shrink-0 mt-1">•</span>
+                      <span>{DIMENSION_LABELS[key]} <span className="text-red-400">(خیلی متفاوت)</span></span>
+                    </li>
+                  ))}
+                  {/* Then show different dimensions */}
+                  {insights.differentDims.map((key) => (
                     <li key={key} className="flex items-start gap-2 text-sm text-foreground/80">
                       <span className="text-orange-400 shrink-0 mt-1">•</span>
-                      <span>{DIMENSION_LABELS[key]} {comparison?.dimensions?.[key]?.relation === "very_different" && "(خیلی متفاوت)"}</span>
+                      <span>{DIMENSION_LABELS[key]} <span className="text-orange-400">(متفاوت)</span></span>
                     </li>
                   ))}
                 </ul>
@@ -2530,80 +2620,47 @@ export default function CompareResultPage() {
                   در این نتایج، تفاوت چشمگیری بین شما دیده نشد. این یعنی در چند الگوی کلیدی، واکنش ذهنی‌تان شبیه‌تر است.
                 </p>
               )}
+              {/* Quantized phrasing for key patterns summary */}
+              {insights.veryDifferentDims.length + insights.differentDims.length > 0 && (
+                <p className="text-sm text-foreground/70 italic mt-3">
+                  {(() => {
+                    const veryDifferentCount = insights.veryDifferentDims.length;
+                    if (veryDifferentCount >= 3) {
+                      return "در اکثر الگوهای کلیدی، ذهن‌های شما متفاوت واکنش نشان می‌دهند.";
+                    } else if (veryDifferentCount >= 1) {
+                      return "در چند الگوی کلیدی، ذهن‌های شما متفاوت واکنش نشان می‌دهند.";
+                    } else {
+                      return "در برخی الگوهای کلیدی، تفاوت دیده می‌شود.";
+                    }
+                  })()}
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
 
-        {/* SECTION 6: CENTRAL HUMAN INTERPRETATION */}
-        {(() => {
-          const maxDelta = largestDiff?.delta || 0;
-          if (maxDelta < 0.8) {
-            // All aligned - use largest similarity dimension
-            const largestSimilar = getLargestSimilarityDimension({
-              stickiness: { delta: comparison?.dimensions?.stickiness?.delta ?? 0, relation: comparison?.dimensions?.stickiness?.relation ?? "similar" },
-              pastBrooding: { delta: comparison?.dimensions?.pastBrooding?.delta ?? 0, relation: comparison?.dimensions?.pastBrooding?.relation ?? "similar" },
-              futureWorry: { delta: comparison?.dimensions?.futureWorry?.delta ?? 0, relation: comparison?.dimensions?.futureWorry?.relation ?? "similar" },
-              interpersonal: { delta: comparison?.dimensions?.interpersonal?.delta ?? 0, relation: comparison?.dimensions?.interpersonal?.relation ?? "similar" },
-            });
-            
-            if (largestSimilar) {
-              const dim = comparison?.dimensions?.[largestSimilar];
-              return (
-                <Card className="bg-primary/10 backdrop-blur-2xl border-primary/20 shadow-xl">
-                  <CardContent className="pt-6">
-                    <div className="prose prose-invert max-w-none">
-                      <p className="text-base text-foreground/90 leading-relaxed whitespace-pre-line text-center">
-                        {generateCentralInterpretation(
-                          largestSimilar,
-                          nameA,
-                          nameB,
-                          dim.aLevel,
-                          dim.bLevel,
-                          dim.aScore,
-                          dim.bScore,
-                          dim.relation,
-                          dim.direction
-                        )}
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            }
-          }
-          
-          return largestDiff ? (
+        {/* SECTION 6: KEY DIFFERENCES (Phase 3 or Phase 7 template) */}
+        {/* For very_different: hide narrative paragraph, only show bullet list above */}
+        {narratives && narratives.keyDifferencesText ? (
           <Card className="bg-primary/10 backdrop-blur-2xl border-primary/20 shadow-xl">
             <CardContent className="pt-6">
               <div className="prose prose-invert max-w-none">
                 <p className="text-base text-foreground/90 leading-relaxed whitespace-pre-line text-center">
-                  {generateCentralInterpretation(
-                    largestDiff.key,
-                    nameA,
-                    nameB,
-                    largestDiff.aLevel,
-                    largestDiff.bLevel,
-                    largestDiff.aScore,
-                      largestDiff.bScore,
-                      comparison?.dimensions?.[largestDiff.key]?.relation ?? "similar",
-                      comparison?.dimensions?.[largestDiff.key]?.direction ?? "equal"
-                  )}
-                  </p>
-                </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <Card className="bg-primary/10 backdrop-blur-2xl border-primary/20 shadow-xl">
-            <CardContent className="pt-6">
-              <div className="prose prose-invert max-w-none">
-                <p className="text-base text-foreground/90 leading-relaxed whitespace-pre-line text-center">
-                  {generateNeutralBlendedInterpretation()}
+                  {narratives.keyDifferencesText}
                 </p>
-            </div>
+              </div>
             </CardContent>
           </Card>
-          );
-        })()}
+        ) : narratives && narratives.keyDifferencesText === "" ? (
+          // very_different case - show bridge sentence
+          <Card className="bg-primary/10 backdrop-blur-2xl border-primary/20 shadow-xl">
+            <CardContent className="pt-6">
+              <p className="text-sm text-foreground/80 leading-relaxed text-center italic">
+                این تفاوت‌ها بیشتر به تفاوتِ ریتم پردازش ذهنی مربوط است تا نیت یا ارزش‌گذاری.
+              </p>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {/* CTA Section - Enhanced Prominent Course CTA */}
         <Card className="bg-gradient-to-br from-green-500/25 via-green-500/20 to-green-500/15 backdrop-blur-2xl border-2 border-green-500/40 shadow-2xl shadow-green-500/20">
@@ -2643,74 +2700,38 @@ export default function CompareResultPage() {
           </CardContent>
         </Card>
 
-        {/* SECTION 7: MISUNDERSTANDING LOOP */}
-        {(() => {
-          const maxDelta = largestDiff?.delta || 0;
-          const dimensionToUse = maxDelta < 0.8 
-            ? getLargestSimilarityDimension({
-                stickiness: { delta: comparison?.dimensions?.stickiness?.delta ?? 0, relation: comparison?.dimensions?.stickiness?.relation ?? "similar" },
-                pastBrooding: { delta: comparison?.dimensions?.pastBrooding?.delta ?? 0, relation: comparison?.dimensions?.pastBrooding?.relation ?? "similar" },
-                futureWorry: { delta: comparison?.dimensions?.futureWorry?.delta ?? 0, relation: comparison?.dimensions?.futureWorry?.relation ?? "similar" },
-                interpersonal: { delta: comparison?.dimensions?.interpersonal?.delta ?? 0, relation: comparison?.dimensions?.interpersonal?.relation ?? "similar" },
-              })
-            : largestDiff?.key;
-          
-          if (!dimensionToUse) return null;
-          
-          const relation = maxDelta < 0.8 ? "similar" : (comparison?.dimensions?.[dimensionToUse]?.relation ?? "similar");
-          const title = relation === "similar" 
-            ? "وقتی این همسویی فعال می‌شود، معمولاً این چرخه شکل می‌گیرد:"
-            : "وقتی این تفاوت فعال می‌شود، معمولاً این چرخه شکل می‌گیرد:";
-          
-          return (
+        {/* SECTION 7: MISUNDERSTANDING LOOP (Phase 4 template) */}
+        {narratives ? (
           <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
             <CardHeader>
-                <CardTitle className="text-center text-xl">{title}</CardTitle>
+              <CardTitle className="text-center text-xl">{narratives.loop.title}</CardTitle>
             </CardHeader>
-              <CardContent className="space-y-4">
-                {generateMisunderstandingLoop(dimensionToUse, relation).map((step, index) => (
-                <div key={index} className="flex items-start gap-3">
-                  <span className="text-primary/80 shrink-0 mt-1 font-medium">{index + 1}.</span>
-                  <p className="text-sm text-foreground/90 leading-relaxed flex-1">{step}</p>
-                </div>
-              ))}
+            <CardContent>
+              <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-line">
+                {narratives.loopText}
+              </p>
             </CardContent>
           </Card>
-          );
-        })()}
+        ) : null}
 
-        {/* SECTION 8: TRIGGER SITUATIONS */}
-        {(() => {
-          const maxDelta = largestDiff?.delta || 0;
-          const dimensionToUse = maxDelta < 0.8 
-            ? getLargestSimilarityDimension({
-                stickiness: { delta: comparison?.dimensions?.stickiness?.delta ?? 0, relation: comparison?.dimensions?.stickiness?.relation ?? "similar" },
-                pastBrooding: { delta: comparison?.dimensions?.pastBrooding?.delta ?? 0, relation: comparison?.dimensions?.pastBrooding?.relation ?? "similar" },
-                futureWorry: { delta: comparison?.dimensions?.futureWorry?.delta ?? 0, relation: comparison?.dimensions?.futureWorry?.relation ?? "similar" },
-                interpersonal: { delta: comparison?.dimensions?.interpersonal?.delta ?? 0, relation: comparison?.dimensions?.interpersonal?.relation ?? "similar" },
-              })
-            : largestDiff?.key;
-          
-          if (!dimensionToUse) return null;
-          
-          return (
-            <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
-              <CardHeader>
-                <CardTitle className="text-center text-xl">موقعیت‌های فعال‌ساز</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-2">
-                  {getCombinedContextualTriggers(dimensionToUse, topDimensionB).map((trigger, index) => (
-                    <li key={index} className="flex items-start gap-2 text-sm text-foreground/80">
-                      <span className="text-primary/80 shrink-0 mt-1">•</span>
-                      <span>{trigger}</span>
-                </li>
-                  ))}
-            </ul>
-              </CardContent>
-            </Card>
-          );
-        })()}
+        {/* SECTION 8: TRIGGER SITUATIONS (Phase 6 triggers template) */}
+        {narratives && narratives.triggers.list.length > 0 ? (
+          <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
+            <CardHeader>
+              <CardTitle className="text-center text-xl">موقعیت‌های فعال‌ساز</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-2">
+                {narratives.triggers.list.map((trigger, index) => (
+                  <li key={index} className="flex items-start gap-2 text-sm text-foreground/80">
+                    <span className="text-primary/80 shrink-0 mt-1">•</span>
+                    <span>{trigger}</span>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {/* SECTION 9: SEEN/UNSEEN CONSEQUENCES */}
         {(() => {
@@ -2760,35 +2781,15 @@ export default function CompareResultPage() {
           );
         })()}
 
-        {/* SECTION 10: EMOTIONAL EXPERIENCE */}
-        {(() => {
-          const maxDelta = largestDiff?.delta || 0;
-          const dimensionToUse = maxDelta < 0.8 
-            ? getLargestSimilarityDimension({
-                stickiness: { delta: comparison?.dimensions?.stickiness?.delta ?? 0, relation: comparison?.dimensions?.stickiness?.relation ?? "similar" },
-                pastBrooding: { delta: comparison?.dimensions?.pastBrooding?.delta ?? 0, relation: comparison?.dimensions?.pastBrooding?.relation ?? "similar" },
-                futureWorry: { delta: comparison?.dimensions?.futureWorry?.delta ?? 0, relation: comparison?.dimensions?.futureWorry?.relation ?? "similar" },
-                interpersonal: { delta: comparison?.dimensions?.interpersonal?.delta ?? 0, relation: comparison?.dimensions?.interpersonal?.relation ?? "similar" },
-              })
-            : largestDiff?.key;
-          
-          if (!dimensionToUse) return null;
-          
-          const relation = maxDelta < 0.8 ? "similar" : (comparison?.dimensions?.[dimensionToUse]?.relation ?? "similar");
-          const dim = comparison?.dimensions?.[dimensionToUse];
-          
-          const emotionalExp = generateEmotionalExperience(
-            dimensionToUse,
-            nameA,
-            nameB,
-            dim.aLevel,
-            dim.bLevel,
-            relation
-          );
-          
+        {/* SECTION 10: EMOTIONAL EXPERIENCE (Phase 5 felt_experience template) */}
+        {narratives && narratives.feltExperienceText ? (() => {
+          const relation = compareState?.dimensions[compareState.dominantDimension]?.relation;
           const title = relation === "similar"
             ? "این همسویی ممکن است این‌طور حس شود"
             : "این تفاوت ممکن است این‌طور حس شود";
+          
+          // Phase 5 templates have two paragraphs (one for A, one for B) separated by newline
+          const paragraphs = narratives.feltExperienceText.split('\n').filter(line => line.trim().length > 0);
           
           return (
             <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
@@ -2796,28 +2797,15 @@ export default function CompareResultPage() {
                 <CardTitle className="text-center text-xl">{title}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {emotionalExp.shared ? (
-                  <div className="p-4 bg-white/5 border border-white/10 rounded-lg">
-                    <p className="text-sm text-foreground/90">{emotionalExp.shared}</p>
+                {paragraphs.map((paragraph, index) => (
+                  <div key={index} className="p-4 bg-white/5 border border-white/10 rounded-lg">
+                    <p className="text-sm text-foreground/90">{paragraph}</p>
                   </div>
-                ) : (
-                  <>
-                    <div className="p-4 bg-white/5 border border-white/10 rounded-lg">
-                      <p className="text-sm text-foreground/90">
-                        <span className="font-medium">{nameA}:</span> {emotionalExp.forA}
-                      </p>
-                    </div>
-                    <div className="p-4 bg-white/5 border border-white/10 rounded-lg">
-                      <p className="text-sm text-foreground/90">
-                        <span className="font-medium">{nameB}:</span> {emotionalExp.forB}
-                      </p>
-                    </div>
-                  </>
-                )}
+                ))}
               </CardContent>
             </Card>
           );
-        })()}
+        })() : null}
 
         {/* SECTION 11: CONVERSATION STARTERS */}
         {(() => {
@@ -2852,38 +2840,40 @@ export default function CompareResultPage() {
           );
         })()}
 
-        {/* SECTION 12: FINAL SUMMARY */}
-        <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
-          <CardContent className="pt-6">
-            <p className="text-sm text-foreground/90 leading-relaxed text-center whitespace-pre-line">
-              این صفحه قرار نیست چیزی را درست یا غلط کند.
-              {"\n"}
-              فقط نشان می‌دهد ذهن‌ها چطور متفاوت واکنش نشان می‌دهند.
-              {"\n"}
-              دیدن این تفاوت‌ها می‌تواند نقطه‌ی شروع فهم باشد، نه بحث.
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* SECTION 13: SAFETY & UNCERTAINTY (Always Render, Distinct Box) */}
-        <Card className="bg-blue-500/10 backdrop-blur-2xl border-blue-500/20 shadow-xl">
-          <CardContent className="pt-6">
-            <p className="text-xs text-foreground/80 leading-relaxed text-center whitespace-pre-line">
-              {SAFETY_STATEMENT}
-            </p>
-          </CardContent>
-        </Card>
+        {/* SECTION 12: SAFETY (Phase 6 or Phase 8 template) */}
+        {narratives ? (
+          <Card className="bg-blue-500/10 backdrop-blur-2xl border-blue-500/20 shadow-xl">
+            <CardContent className="pt-6">
+              <p className="text-xs text-foreground/80 leading-relaxed text-center whitespace-pre-line">
+                {narratives.safetyText}
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="bg-blue-500/10 backdrop-blur-2xl border-blue-500/20 shadow-xl">
+            <CardContent className="pt-6">
+              <p className="text-xs text-foreground/80 leading-relaxed text-center whitespace-pre-line">
+                {SAFETY_STATEMENT}
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Share & PDF Section */}
         <Card className="bg-white/5 backdrop-blur-2xl border-white/10">
           <CardContent className="pt-6">
-            <div className="space-y-3">
-              <div className="flex flex-col sm:flex-row gap-3">
+            <div className="space-y-3 text-right">
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
                 <Button
                   onClick={handleDownloadPdf}
                   disabled={isGeneratingPdf}
                   variant="outline"
-                  className="flex-1 rounded-xl min-h-[44px] bg-white/10 border-white/20"
+                  className="flex-1 sm:flex-1 rounded-xl min-h-[44px] min-w-0 border-white/20 hover:opacity-90"
+                  style={{ 
+                    backgroundColor: '#E00721',
+                    color: 'white',
+                    borderColor: '#E00721'
+                  }}
                   data-pdf-ignore="true"
                 >
                   {isGeneratingPdf ? (
@@ -2901,7 +2891,7 @@ export default function CompareResultPage() {
                 <Button
                   onClick={handleSharePdf}
                   disabled={isGeneratingPdf}
-                  className="flex-1 rounded-xl min-h-[44px] bg-primary/80 hover:bg-primary border-primary/40"
+                  className="flex-1 sm:flex-1 rounded-xl min-h-[44px] bg-primary/80 hover:bg-primary border-primary/40 min-w-0"
                   data-pdf-ignore="true"
                 >
                   {isGeneratingPdf ? (
@@ -2917,6 +2907,25 @@ export default function CompareResultPage() {
                   )}
                 </Button>
               </div>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                <Button
+                  onClick={handleShareShareText}
+                  className="flex-1 sm:flex-1 rounded-xl min-h-[44px] bg-primary/80 hover:bg-primary border-primary/40 min-w-0"
+                  data-pdf-ignore="true"
+                >
+                  <Share2 className="w-4 h-4 ml-2" />
+                  اشتراک‌گذاری متنی
+                </Button>
+                <Button
+                  onClick={handleCopyShareText}
+                  variant="outline"
+                  className="flex-1 sm:flex-1 rounded-xl min-h-[44px] bg-white/10 border-white/20 min-w-0"
+                  data-pdf-ignore="true"
+                >
+                  <FileText className="w-4 h-4 ml-2" />
+                  کپی متن
+                </Button>
+              </div>
               <Button
                 onClick={handleCopyLink}
                 variant="outline"
@@ -2926,6 +2935,24 @@ export default function CompareResultPage() {
                 <LinkIcon className="w-4 h-4 ml-2" />
                 کپی لینک مقایسه
               </Button>
+              {/* Quiz Button - Navigate to Landing Page */}
+              <div className="pt-4">
+                <Button
+                  asChild
+                  size="lg"
+                  className="w-full rounded-xl min-h-[60px] text-lg font-bold shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all duration-200"
+                  style={{
+                    backgroundColor: '#2563eb',
+                    color: 'white',
+                    borderColor: '#2563eb',
+                  }}
+                  data-pdf-ignore="true"
+                >
+                  <Link to="/" className="w-full">
+                    انجام آزمون برای دیدن نمره و تحلیل شخصی
+                  </Link>
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>

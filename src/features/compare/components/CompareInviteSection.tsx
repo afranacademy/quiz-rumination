@@ -462,7 +462,11 @@ export function CompareInviteSection({ attemptId }: CompareInviteSectionProps) {
             <Button
               onClick={handleCreateInvite}
               disabled={inviteLoading || authLoading}
-              className="rounded-xl min-h-[56px] px-8 text-base sm:text-lg font-semibold bg-primary/90 hover:bg-primary border-primary/40 shadow-lg"
+              className={`rounded-xl min-h-[56px] px-8 text-base sm:text-lg font-semibold bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600 border-blue-400/50 shadow-lg shadow-blue-500/30 transition-all duration-200 hover:scale-105 hover:shadow-xl hover:shadow-blue-500/40 active:scale-95 ${
+                !inviteLoading && !authLoading 
+                  ? "animate-bounce-pulse hover:animate-none" 
+                  : ""
+              }`}
               size="lg"
             >
               {inviteLoading ? "در حال ساخت لینک…" : "دعوت یک نفر برای مقایسه‌ی ذهن‌ها"}

@@ -10,7 +10,7 @@ import { pickSummaryRange } from "@/features/share/summaryRanges";
 import type { LevelKey } from "../types";
 import { CompareInviteSection } from "@/features/compare/components/CompareInviteSection";
 import { MindPatternCard } from "./MindPatternCard";
-import { formatInviteText } from "@/utils/inviteCta";
+import { buildInviteTextForShare, buildInviteTextForCopy, buildInviteCta, CTA_URL, shareInvite, copyInvite } from "@/utils/inviteCta";
 
 interface SocialShareSectionProps {
   level: LevelKey;
@@ -44,14 +44,14 @@ export function SocialShareSection({
   // Get summary range based on score
   const summaryRange = pickSummaryRange(score);
   
-  // Build summary text for sharing (range text + score + invite link)
-  const summaryTextForShare = (() => {
+  // Build summary text for copy (includes URL)
+  const summaryTextForCopy = (() => {
     const lines = [
       summaryRange.text,
       "",
       `امتیاز: ${score} از ${maxScore}`,
       "",
-      formatInviteText(true), // Include URL for share text
+      buildInviteTextForCopy(), // CTA + URL on separate line
     ];
     return lines.join("\n");
   })();
@@ -59,10 +59,11 @@ export function SocialShareSection({
 
 
   const handleShare = async () => {
-    const result = await shareOrCopyText({
+    const contentText = `${summaryRange.text}\n\nامتیاز: ${score} از ${maxScore}`;
+    
+    const result = await shareInvite({
       title: quizTitle,
-      text: summaryTextForShare,
-      url: currentUrl,
+      contentText,
     });
 
     if (result.ok) {
@@ -97,7 +98,8 @@ export function SocialShareSection({
   };
 
   const handleCopy = async () => {
-    const success = await copyText(summaryTextForShare);
+    const contentText = `${summaryRange.text}\n\nامتیاز: ${score} از ${maxScore}`;
+    const success = await copyInvite({ contentText });
     if (success) {
       setShareStatus({ type: "copy", message: "کپی شد" });
       setTimeout(() => {
@@ -109,7 +111,8 @@ export function SocialShareSection({
   const handleSummaryPdf = async () => {
     try {
       // First, copy the text for personal use
-      const copySuccess = await copyText(summaryTextForShare);
+      const contentText = `${summaryRange.text}\n\nامتیاز: ${score} از ${maxScore}`;
+      const copySuccess = await copyInvite({ contentText });
       if (copySuccess) {
         setShareStatus({ type: "copy", message: "متن کپی شد" });
         setTimeout(() => {
@@ -240,13 +243,16 @@ export function SocialShareSection({
             </div>
           </div>
 
-          {/* Shareable Text (hidden, for copy/share) */}
-          <textarea
-            readOnly
-            value={summaryTextForShare}
-            className="sr-only"
-            aria-hidden="true"
-          />
+          {/* Invite Link - Clickable Button/Span */}
+          <div className="pt-2 pb-2 text-center">
+            <Button
+              variant="link"
+              className="text-primary hover:underline cursor-pointer text-base font-medium p-0 h-auto"
+              onClick={() => window.open(CTA_URL, '_blank')}
+            >
+              {buildInviteCta()}
+            </Button>
+          </div>
           
           {shareStatus.message && (
             <div

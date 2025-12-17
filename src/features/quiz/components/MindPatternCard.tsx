@@ -8,8 +8,7 @@ import type { LikertValue } from "../types";
 import { quizDefinition } from "@/features/quiz/data/afranR14";
 import { AppModal } from "@/components/AppModal";
 import { Share2, Download, RefreshCw } from "lucide-react";
-import { shareOrCopyText } from "@/features/share/shareClient";
-import { buildMindPatternShareText } from "@/features/mindPattern/buildMindPatternShareText";
+import { shareInvite } from "@/utils/inviteCta";
 import { buildMindPatternItems } from "@/features/mindPattern/buildMindPattern";
 import {
   generatePdfBlob,
@@ -104,7 +103,6 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
 
         if (!answers) {
           setError("اطلاعات کافی برای ساخت الگوی ذهنی موجود نیست.");
-          setNarratives(null);
           setLoading(false);
           return;
         }
@@ -157,13 +155,23 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
     setIsSharing(true);
     try {
       const items = buildMindPatternItems(answers);
-      const quizUrl = typeof window !== "undefined" ? window.location.origin : "";
-      const shareText = buildMindPatternShareText(items, quizUrl);
+      
+      // Build content text (without invite - invite will be added by shareInvite)
+      const bulletPoints = items
+        .filter((item): item is typeof items[0] => item != null && 'description' in item && item.description != null)
+        .map((item, index) => `${index + 1}. ${item.description}`);
+      
+      const contentText = [
+        "الگوی ذهنی من",
+        "",
+        ...bulletPoints,
+        "",
+        "این نتیجه مربوط به آزمون «سنجش نشخوار فکری – ذهن وراج» است.",
+      ].join("\n");
 
-      const result = await shareOrCopyText({
+      const result = await shareInvite({
         title: "الگوی ذهنی من",
-        text: shareText,
-        url: quizUrl,
+        contentText,
       });
 
       if (result.ok) {
@@ -337,8 +345,8 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
         >
           <MindPatternModalContent
             answers={answers}
-            firstName={firstName}
-            modalContentRef={modalContentRef}
+            firstName={firstName ?? null}
+            modalContentRef={modalContentRef as React.RefObject<HTMLDivElement>}
             isGeneratingPdf={isGeneratingPdf}
             isSharing={isSharing}
             onShare={handleShare}
@@ -354,7 +362,7 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
 // Separate component for modal content to ensure it's not rendered inline
 function MindPatternModalContent({
   answers,
-  firstName,
+  firstName: _firstName,
   modalContentRef,
   isGeneratingPdf,
   isSharing,
@@ -433,13 +441,18 @@ function MindPatternModalContent({
       </div>
 
       {/* Share & PDF Actions - Sticky Footer */}
-      <div className="sticky bottom-0 left-0 right-0 pt-4 border-t border-white/10 space-y-3 bg-background/95 backdrop-blur-sm -mx-4 -mb-4 px-4 pb-4 z-10">
+      <div className="sticky bottom-0 left-0 right-0 pt-4 border-t border-white/10 space-y-3 bg-white/10 backdrop-blur-2xl -mx-4 -mb-4 px-4 pb-4 z-10">
         <div className="flex flex-col sm:flex-row gap-3">
           <Button
             onClick={onDownloadPdf}
             disabled={isGeneratingPdf}
             variant="outline"
-            className="flex-1 rounded-xl min-h-[44px] bg-white/10 border-white/20"
+            className="flex-1 rounded-xl min-h-[44px] border-white/20 hover:opacity-90"
+            style={{ 
+              backgroundColor: '#E00721',
+              color: 'white',
+              borderColor: '#E00721'
+            }}
             data-pdf-ignore="true"
           >
             {isGeneratingPdf ? (

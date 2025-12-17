@@ -7,8 +7,9 @@ import {
   StyleSheet,
   Image,
 } from "@react-pdf/renderer";
-import type { Comparison } from "@/domain/compare/types";
 import type { DimensionKey } from "@/domain/quiz/types";
+import type { CompareNarratives } from "@/features/compare/getCompareNarratives";
+import { DIMENSIONS } from "@/domain/quiz/dimensions";
 import { PDF_RTL } from "../theme/rtl";
 import { ITEM_MIN_PRESENCE } from "./theme/pagination";
 import { PdfCtaLink } from "./components/PdfCtaLink";
@@ -64,7 +65,7 @@ const styles = StyleSheet.create({
     color: COLORS.coverText,
     marginBottom: 16,
     textAlign: "center",
-    letterSpacing: 0.5,
+    // letterSpacing removed to prevent Persian word breaking
   },
   coverSubtitle: {
     fontSize: 16,
@@ -281,121 +282,38 @@ const styles = StyleSheet.create({
   },
 });
 
+// Constants for dimension labels (same as UI)
+const DIMENSION_LABELS: Record<DimensionKey, string> = {
+  stickiness: "چسبندگی فکری",
+  pastBrooding: "بازگشت به گذشته",
+  futureWorry: "نگرانی آینده",
+  interpersonal: "حساسیت بین‌فردی",
+};
+
+const DIMENSION_DEFINITIONS: Record<DimensionKey, string> = {
+  stickiness: "تمایل ذهن به ماندن روی فکرها بعد از پایان موقعیت",
+  pastBrooding: "بازگشت ذهن به اتفاق‌ها یا گفت‌وگوهای قبلی",
+  futureWorry: "درگیری ذهن با آینده و پیش‌بینی رویدادها",
+  interpersonal: "حساسیت به نشانه‌های رفتاری در رابطه‌ها",
+};
+
+const LEVEL_LABELS: Record<"low" | "medium" | "high", string> = {
+  low: "کم",
+  medium: "متوسط",
+  high: "زیاد",
+};
+
 interface ComparePdfDocumentProps {
+  narratives: CompareNarratives;
   nameA: string;
   nameB: string;
-  comparison: Comparison;
-  attemptA: {
-    dimension_scores: Record<DimensionKey, number>;
-  };
-  attemptB: {
-    dimension_scores: Record<DimensionKey, number>;
-  };
-  topDimensionA?: DimensionKey;
-  topDimensionB?: DimensionKey;
-  overallSimilarity: "low" | "medium" | "high";
-  misunderstandingRisk: "low" | "medium" | "high";
-  largestDiff?: {
-    key: DimensionKey;
-    delta: number;
-  };
-  similarities: DimensionKey[];
-  differences: DimensionKey[];
-  getDimensionNameForSnapshot: (key: DimensionKey) => string;
-  generateMindSnapshot: (
-    name: string,
-    dimension: DimensionKey,
-    scores: Record<DimensionKey, number>
-  ) => string;
-  generateCentralInterpretation: (
-    dimension: DimensionKey,
-    nameA: string,
-    nameB: string,
-    aLevel: "low" | "medium" | "high",
-    bLevel: "low" | "medium" | "high",
-    aScore: number,
-    bScore: number,
-    relation: "similar" | "different" | "very_different",
-    direction: "a_higher" | "b_higher" | "equal"
-  ) => string;
-  generateNeutralBlendedInterpretation: () => string;
-  generateMisunderstandingLoop: (
-    dimension: DimensionKey,
-    relation: "similar" | "different" | "very_different"
-  ) => string[];
-  getCombinedContextualTriggers: (
-    dimension: DimensionKey,
-    topDimensionB?: DimensionKey
-  ) => string[];
-  getSeenUnseenConsequences: (dimension: DimensionKey) => {
-    unseen: string[];
-    seen: string[];
-  };
-  generateEmotionalExperience: (
-    dimension: DimensionKey,
-    nameA: string,
-    nameB: string,
-    aLevel: "low" | "medium" | "high",
-    bLevel: "low" | "medium" | "high",
-    relation: "similar" | "different" | "very_different"
-  ) => {
-    shared?: string;
-    forA: string;
-    forB: string;
-  };
-  getConversationStarters: (
-    dimension: DimensionKey,
-    relation: "similar" | "different" | "very_different"
-  ) => string[];
-  getMisunderstandingRiskText: (risk: "low" | "medium" | "high") => string;
-  getSimilarityComplementarySentence: (
-    similarity: "low" | "medium" | "high"
-  ) => string;
-  getAlignmentLabel: (delta: number) => string;
-  generateDimensionSummary: (
-    relation: "similar" | "different" | "very_different",
-    aLevel: "low" | "medium" | "high",
-    bLevel: "low" | "medium" | "high"
-  ) => string;
-  DIMENSION_LABELS: Record<DimensionKey, string>;
-  DIMENSION_DEFINITIONS: Record<DimensionKey, string>;
-  LEVEL_LABELS: Record<"low" | "medium" | "high", string>;
-  SIMILARITY_LABELS: Record<"low" | "medium" | "high", string>;
-  SAFETY_STATEMENT: string;
   now?: Date;
 }
 
 export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
+  narratives,
   nameA,
   nameB,
-  comparison,
-  attemptA,
-  attemptB,
-  topDimensionA,
-  topDimensionB,
-  overallSimilarity,
-  misunderstandingRisk,
-  largestDiff,
-  similarities,
-  differences,
-  getDimensionNameForSnapshot,
-  generateMindSnapshot,
-  generateCentralInterpretation,
-  generateNeutralBlendedInterpretation,
-  generateMisunderstandingLoop,
-  getCombinedContextualTriggers,
-  getSeenUnseenConsequences,
-  generateEmotionalExperience,
-  getConversationStarters,
-  getMisunderstandingRiskText,
-  getSimilarityComplementarySentence,
-  getAlignmentLabel,
-  generateDimensionSummary,
-  DIMENSION_LABELS,
-  DIMENSION_DEFINITIONS,
-  LEVEL_LABELS,
-  SIMILARITY_LABELS,
-  SAFETY_STATEMENT,
   now,
 }) => {
   const safeNow = now ?? new Date();
@@ -405,12 +323,7 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
     console.log("[PDF] now:", safeNow.toISOString(), formatPersianDate(safeNow));
   }
 
-  const dimensionKeys: DimensionKey[] = [
-    "stickiness",
-    "pastBrooding",
-    "futureWorry",
-    "interpersonal",
-  ];
+  const dimensionKeys: DimensionKey[] = DIMENSIONS;
 
   return (
     <Document>
@@ -460,67 +373,28 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
             >
               <View style={[styles.chip, styles.chipPrimary]}>
                 <Text>
-                  شباهت کلی: {SIMILARITY_LABELS[overallSimilarity]}
+                  شباهت کلی: {narratives.meta.similarityLabel}
                 </Text>
               </View>
               <View style={[styles.chip, styles.chipOrange]}>
                 <Text>
-                  ریسک سوءتفاهم:{" "}
-                  {misunderstandingRisk === "low"
-                    ? "کم"
-                    : misunderstandingRisk === "medium"
-                    ? "متوسط"
-                    : "زیاد"}
+                  ریسک سوءتفاهم: {narratives.meta.riskLabel}
                 </Text>
               </View>
             </View>
             <Text style={styles.textSmall}>
-              {getMisunderstandingRiskText(misunderstandingRisk)}
+              {narratives.meta.riskLabel}
             </Text>
-            {largestDiff && (
-              <Text style={styles.textCenter}>
-                بزرگ‌ترین تفاوت ذهنی شما در:{" "}
-                {getDimensionNameForSnapshot(largestDiff.key)}
-              </Text>
-            )}
+            <Text style={styles.textCenter}>
+              {narratives.dominantDifference.headline}
+            </Text>
             <Text style={styles.textSmall}>
-              {getSimilarityComplementarySentence(overallSimilarity)}
+              {narratives.similarityComplementarySentence}
             </Text>
           </View>
         </View>
 
-        {/* Mind Profiles */}
-        {(topDimensionA || topDimensionB) && (
-          <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.section}>
-            <View wrap={false} style={styles.sectionTitleWrapper}>
-              <Text style={styles.sectionTitle}>سبک‌های ذهنی</Text>
-            </View>
-            {topDimensionA && (
-              <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
-                <Text style={styles.sectionSubtitle}>سبک ذهنی {nameA}</Text>
-                <Text style={styles.text}>
-                  {generateMindSnapshot(
-                    nameA,
-                    topDimensionA,
-                    attemptA.dimension_scores
-                  )}
-                </Text>
-              </View>
-            )}
-            {topDimensionB && (
-              <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
-                <Text style={styles.sectionSubtitle}>سبک ذهنی {nameB}</Text>
-                <Text style={styles.text}>
-                  {generateMindSnapshot(
-                    nameB,
-                    topDimensionB,
-                    attemptB.dimension_scores
-                  )}
-                </Text>
-              </View>
-            )}
-          </View>
-        )}
+        {/* Mind Profiles section removed - using unified narratives only */}
 
         {/* CTA removed from page 1 - will appear only at end */}
         <Text style={styles.pageNumber}>1</Text>
@@ -531,16 +405,19 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
         <View wrap={false} style={styles.sectionTitleWrapper}>
           <Text style={styles.sectionTitle}>نقشه‌ی ذهنی</Text>
         </View>
-        {dimensionKeys.map((key) => {
-          const dim = comparison?.dimensions?.[key];
-          if (!dim) return null;
-          const isUnknown =
-            isNaN(dim.delta ?? NaN) ||
-            isNaN(dim.aScore ?? NaN) ||
-            isNaN(dim.bScore ?? NaN);
+        {narratives.mentalMap.map((mapItem) => {
+          const key = mapItem.dimension;
+          const isUnknown = mapItem.isUnknown;
+          const relation = mapItem.relation;
           const alignment = isUnknown
             ? "نامشخص"
-            : getAlignmentLabel(dim.delta ?? 0);
+            : relation === "similar"
+            ? "همسو"
+            : relation === "different"
+            ? "متفاوت"
+            : relation === "very_different"
+            ? "خیلی متفاوت"
+            : "نامشخص";
 
           return (
             <View
@@ -581,29 +458,25 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
                 <View style={styles.col}>
                   <Text style={styles.textSmall}>
                     {nameA}:{" "}
-                    {isUnknown
+                    {isUnknown || mapItem.aLevel === null
                       ? "نامشخص"
-                      : LEVEL_LABELS[dim.aLevel] || "نامشخص"}
+                      : LEVEL_LABELS[mapItem.aLevel] || "نامشخص"}
                   </Text>
                 </View>
                 <View style={styles.colSpacer} />
                 <View style={styles.col}>
                   <Text style={styles.textSmall}>
                     {nameB}:{" "}
-                    {isUnknown
+                    {isUnknown || mapItem.bLevel === null
                       ? "نامشخص"
-                      : LEVEL_LABELS[dim.bLevel] || "نامشخص"}
+                      : LEVEL_LABELS[mapItem.bLevel] || "نامشخص"}
                   </Text>
                 </View>
               </View>
               <Text style={styles.textSmall}>
                 {isUnknown
                   ? "این بُعد قابل محاسبه نیست (داده ناقص است)."
-                  : generateDimensionSummary(
-                      dim.relation,
-                      dim.aLevel,
-                      dim.bLevel
-                    )}
+                  : narratives.mentalMapByDimension[key] || mapItem.text}
               </Text>
             </View>
           );
@@ -616,8 +489,8 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
           </View>
           <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
             <Text style={styles.sectionSubtitle}>شباهت‌ها</Text>
-            {similarities.length > 0 ? (
-              similarities.map((key) => (
+            {narratives.similarities.length > 0 ? (
+              narratives.similarities.map((key) => (
                 <View key={key} style={styles.listItem}>
                   <Text style={[styles.bullet, styles.bulletBox]}>•</Text>
                   <Text style={[styles.textSmall, styles.listText]}>
@@ -633,17 +506,20 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
             )}
             <View style={styles.divider} />
             <Text style={styles.sectionSubtitle}>تفاوت‌ها</Text>
-            {differences.length > 0 ? (
-              differences.map((key) => (
-                <View key={key} style={styles.listItem}>
-                  <Text style={[styles.bullet, styles.bulletBox]}>•</Text>
-                  <Text style={[styles.textSmall, styles.listText]}>
-                    {DIMENSION_LABELS[key]}
-                    {comparison?.dimensions?.[key]?.relation ===
-                      "very_different" && " (خیلی متفاوت)"}
-                  </Text>
-                </View>
-              ))
+            {narratives.differences.length > 0 ? (
+              narratives.differences.map((key) => {
+                const mapItem = narratives.mentalMap.find(m => m.dimension === key);
+                const isVeryDifferent = mapItem?.relation === "very_different";
+                return (
+                  <View key={key} style={styles.listItem}>
+                    <Text style={[styles.bullet, styles.bulletBox]}>•</Text>
+                    <Text style={[styles.textSmall, styles.listText]}>
+                      {DIMENSION_LABELS[key]}
+                      {isVeryDifferent && " (خیلی متفاوت)"}
+                    </Text>
+                  </View>
+                );
+              })
             ) : (
               <Text style={styles.textSmall}>
                 در این نتایج، تفاوت چشمگیری بین شما دیده نشد. این یعنی در چند
@@ -658,21 +534,10 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
 
       {/* Additional pages for detailed content */}
       {(() => {
-        const maxDelta = largestDiff?.delta || 0;
-        const dimensionToUse =
-          maxDelta < 0.8
-            ? similarities[0] || dimensionKeys[0]
-            : largestDiff?.key || dimensionKeys[0];
-        if (!dimensionToUse) return null;
-
-        const dim = comparison?.dimensions?.[dimensionToUse];
-        if (!dim) return null;
-
-        const relation =
-          maxDelta < 0.8
-            ? "similar"
-            : (comparison?.dimensions?.[dimensionToUse]?.relation ??
-                "similar");
+        // Use dominant dimension from narratives (no recomputation)
+        const dimensionToUse = narratives.meta.dominantDimension;
+        const mapItem = narratives.mentalMap.find(m => m.dimension === dimensionToUse);
+        if (!mapItem) return null;
 
         return (
           <>
@@ -683,19 +548,7 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
               </View>
               <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={[styles.card, styles.cardHighlight]}>
                 <Text style={styles.text}>
-                  {maxDelta < 0.8
-                    ? generateNeutralBlendedInterpretation()
-                    : generateCentralInterpretation(
-                        dimensionToUse,
-                        nameA,
-                        nameB,
-                        dim.aLevel,
-                        dim.bLevel,
-                        dim.aScore,
-                        dim.bScore,
-                        relation,
-                        dim.direction
-                      )}
+                  {narratives.dominantDifferenceText}
                 </Text>
               </View>
 
@@ -703,13 +556,11 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
               <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.section}>
                 <View wrap={false} style={styles.sectionTitleWrapper}>
                   <Text style={styles.sectionTitle}>
-                    {relation === "similar"
-                      ? "وقتی این همسویی فعال می‌شود، معمولاً این چرخه شکل می‌گیرد:"
-                      : "وقتی این تفاوت فعال می‌شود، معمولاً این چرخه شکل می‌گیرد:"}
+                    {narratives.loop.title}
                   </Text>
                 </View>
                 <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
-                  {generateMisunderstandingLoop(dimensionToUse, relation).map(
+                  {narratives.loop.steps.map(
                     (step, index) => (
                       <View key={index} style={styles.listItem}>
                         <Text style={[styles.bullet, styles.numberBox]}>{`${index + 1}.`}</Text>
@@ -726,10 +577,7 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
                   <Text style={styles.sectionTitle}>موقعیت‌های فعال‌ساز</Text>
                 </View>
                 <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
-                  {getCombinedContextualTriggers(
-                    dimensionToUse,
-                    topDimensionB
-                  ).map((trigger, index) => (
+                  {narratives.triggers.list.map((trigger, index) => (
                     <View key={index} style={styles.listItem}>
                       <Text style={[styles.bullet, styles.bulletBox]}>•</Text>
                       <Text style={[styles.textSmall, styles.listText]}>{trigger}</Text>
@@ -760,14 +608,14 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
                     >
                       اگر دیده نشود
                     </Text>
-                    {getSeenUnseenConsequences(dimensionToUse).unseen.map(
+                    {narratives.seenUnseenConsequences?.unseen.map(
                       (item, idx) => (
                         <View key={idx} style={styles.listItem}>
                           <Text style={[styles.bullet, styles.bulletBox]}>•</Text>
                           <Text style={[styles.textSmall, styles.listText]}>{item}</Text>
                         </View>
                       )
-                    )}
+                    ) || []}
                   </View>
                   <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={[styles.col, styles.card]}>
                     <Text
@@ -778,14 +626,14 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
                     >
                       اگر دیده شود
                     </Text>
-                    {getSeenUnseenConsequences(dimensionToUse).seen.map(
+                    {narratives.seenUnseenConsequences?.seen.map(
                       (item, idx) => (
                         <View key={idx} style={styles.listItem}>
                           <Text style={[styles.bullet, styles.bulletBox]}>•</Text>
                           <Text style={[styles.textSmall, styles.listText]}>{item}</Text>
                         </View>
                       )
-                    )}
+                    ) || []}
                   </View>
                 </View>
               </View>
@@ -794,37 +642,15 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
               <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.section}>
                 <View wrap={false} style={styles.sectionTitleWrapper}>
                   <Text style={styles.sectionTitle}>
-                    {relation === "similar"
+                    {mapItem.relation === "similar"
                       ? "این همسویی ممکن است این‌طور حس شود"
                       : "این تفاوت ممکن است این‌طور حس شود"}
                   </Text>
                 </View>
                 <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
-                  {(() => {
-                    const emotionalExp = generateEmotionalExperience(
-                      dimensionToUse,
-                      nameA,
-                      nameB,
-                      dim.aLevel,
-                      dim.bLevel,
-                      relation
-                    );
-                    return emotionalExp.shared ? (
-                      <Text style={styles.text}>{emotionalExp.shared}</Text>
-                    ) : (
-                      <>
-                        <Text style={styles.text}>
-                          <Text style={{ fontWeight: "bold" }}>{nameA}:</Text>{" "}
-                          {emotionalExp.forA}
-                        </Text>
-                        <View style={styles.divider} />
-                        <Text style={styles.text}>
-                          <Text style={{ fontWeight: "bold" }}>{nameB}:</Text>{" "}
-                          {emotionalExp.forB}
-                        </Text>
-                      </>
-                    );
-                  })()}
+                  {narratives.feltExperienceText ? (
+                    <Text style={styles.text}>{narratives.feltExperienceText}</Text>
+                  ) : null}
                 </View>
               </View>
 
@@ -833,20 +659,22 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
                 <View wrap={false} style={styles.sectionTitleWrapper}>
                   <Text style={styles.sectionTitle}>شروع گفت‌وگو</Text>
                 </View>
-                <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
-                  {getConversationStarters(dimensionToUse, relation).map(
-                    (q, idx) => (
-                      <View
-                        wrap={false}
-                        minPresenceAhead={60}
-                        key={idx}
-                        style={[styles.card, { marginBottom: 8, padding: 12 }]}
-                      >
-                        <Text style={styles.textSmall}>{q}</Text>
-                      </View>
-                    )
-                  )}
-                </View>
+                {narratives.conversationStarters && narratives.conversationStarters.length > 0 && (
+                  <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
+                    {narratives.conversationStarters.map(
+                      (q, idx) => (
+                        <View
+                          wrap={false}
+                          minPresenceAhead={60}
+                          key={idx}
+                          style={[styles.card, { marginBottom: 8, padding: 12 }]}
+                        >
+                          <Text style={styles.textSmall}>{q}</Text>
+                        </View>
+                      )
+                    )}
+                  </View>
+                )}
               </View>
 
               {/* Final Summary */}
@@ -863,7 +691,7 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
               {/* Safety Statement */}
               <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.section}>
                 <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={[styles.card, { backgroundColor: COLORS.primaryLightest }]}>
-                  <Text style={styles.textSmall}>{SAFETY_STATEMENT}</Text>
+                  <Text style={styles.textSmall}>{narratives.safetyText}</Text>
                 </View>
               </View>
 

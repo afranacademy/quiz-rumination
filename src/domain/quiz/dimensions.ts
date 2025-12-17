@@ -1,6 +1,17 @@
 import type { Answers12, DimensionKey } from "./types";
 
 /**
+ * Canonical list of all dimension keys.
+ * This is the single source of truth for dimension ordering and iteration.
+ */
+export const DIMENSIONS: readonly DimensionKey[] = [
+  "stickiness",
+  "pastBrooding",
+  "futureWorry",
+  "interpersonal",
+] as const;
+
+/**
  * Maps dimension keys to 1-indexed question numbers.
  */
 export const DIMENSION_QUESTION_MAP: Record<DimensionKey, number[]> = {
@@ -18,7 +29,8 @@ export const DIMENSION_QUESTION_MAP: Record<DimensionKey, number[]> = {
 export function computeDimensionScores(answers: Answers12): Record<DimensionKey, number> {
   const scores: Record<DimensionKey, number> = {} as Record<DimensionKey, number>;
 
-  for (const [dimension, questionNumbers] of Object.entries(DIMENSION_QUESTION_MAP)) {
+  for (const dimension of DIMENSIONS) {
+    const questionNumbers = DIMENSION_QUESTION_MAP[dimension];
     const dimensionKey = dimension as DimensionKey;
     const questionIndices = questionNumbers.map(q => q - 1); // Convert 1-indexed to 0-indexed
 

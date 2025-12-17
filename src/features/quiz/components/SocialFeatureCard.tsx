@@ -68,18 +68,30 @@ export function SocialFeatureCard({
 
         {secondaryActions && secondaryActions.length > 0 && (
           <div className="flex flex-col sm:flex-row gap-2">
-            {secondaryActions.map((action, index) => (
-              <div key={index} className="flex-1">
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="w-full rounded-xl min-h-[44px] text-xs sm:text-sm bg-white/5 border-white/15 backdrop-blur-sm hover:bg-white/10 text-foreground/90"
-                  onClick={action.onClick}
-                >
-                  {action.label}
-                </Button>
-              </div>
-            ))}
+            {secondaryActions.map((action, index) => {
+              const isDownloadPdf = action.label.includes("دانلود PDF");
+              return (
+                <div key={index} className="flex-1">
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className={`w-full rounded-xl min-h-[44px] text-xs sm:text-sm backdrop-blur-sm ${
+                      isDownloadPdf 
+                        ? "border-white/20 hover:opacity-90" 
+                        : "bg-white/5 border-white/15 hover:bg-white/10 text-foreground/90"
+                    }`}
+                    style={isDownloadPdf ? {
+                      backgroundColor: '#E00721',
+                      color: 'white',
+                      borderColor: '#E00721'
+                    } : undefined}
+                    onClick={action.onClick}
+                  >
+                    {action.label}
+                  </Button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

@@ -1,6 +1,6 @@
 import type { Comparison } from "./types";
 import type { DimensionKey } from "../quiz/types";
-import { formatInviteText } from "@/utils/inviteCta";
+import { buildInviteTextForCopy } from "@/utils/inviteCta";
 
 export type CompareRelation = "similar" | "different";
 
@@ -156,7 +156,7 @@ export function buildCompareCardPayload(comparison: Comparison): CompareCardPayl
 
   shareLines.push(
     "تو هم می‌تونی آزمون «ذهن وراج» رو انجام بدی و نتیجه‌ات رو به اشتراک بذاری:",
-    formatInviteText(true) // Include URL for share text
+    buildInviteTextForCopy() // CTA + URL on separate line
   );
 
   const shareTextFa = shareLines.join("\n");

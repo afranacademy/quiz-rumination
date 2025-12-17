@@ -31,10 +31,14 @@ function registerPeydaFont() {
       ],
     });
 
+    // Disable hyphenation to prevent Persian word breaking
+    // This prevents words like "بز رگ ترین" from being split
+    Font.registerHyphenationCallback((word: string) => [word]);
+
     fontRegistered = true;
 
     if (import.meta.env.DEV) {
-      console.log("[buildPdf] Peyda font registered with Vite asset URLs");
+      console.log("[buildPdf] Peyda font registered with Vite asset URLs and hyphenation disabled");
     }
   } catch (error) {
     if (import.meta.env.DEV) {

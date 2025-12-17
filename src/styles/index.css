@@ -1,3 +1,18 @@
 @import './fonts.css';
 @import './tailwind.css';
 @import './theme.css';
+
+/* Simple gentle bounce animation for invite button */
+@keyframes gentle-bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+/* Class for applying gentle bounce animation */
+.animate-bounce-pulse {
+  animation: gentle-bounce 3s ease-in-out infinite;
+}

@@ -1,7 +1,6 @@
 import type { Attempt, DimensionKey } from "../quiz/types";
 import type { Comparison } from "./types";
-import { computeDimensionScores } from "../quiz/dimensions";
-import { levelOfDimension } from "../quiz/dimensions";
+import { DIMENSIONS, computeDimensionScores, levelOfDimension } from "../quiz/dimensions";
 
 /**
  * Compares two attempts and generates a Comparison.
@@ -23,12 +22,10 @@ export function compareAttempts(a: Attempt, b: Attempt): Comparison {
   const aDimensions = computeDimensionScores(a.answers);
   const bDimensions = computeDimensionScores(b.answers);
 
-  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
-
   const dimensions: Comparison["dimensions"] = {} as Comparison["dimensions"];
   let similarCount = 0;
 
-  for (const key of dimensionKeys) {
+  for (const key of DIMENSIONS) {
     const aScore = aDimensions[key];
     const bScore = bDimensions[key];
     const delta = Math.round(Math.abs(aScore - bScore) * 10) / 10;

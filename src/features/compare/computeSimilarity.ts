@@ -1,4 +1,5 @@
 import type { DimensionKey } from "@/domain/quiz/types";
+import { DIMENSIONS } from "@/domain/quiz/dimensions";
 
 /**
  * Computes overall similarity level from dimension deltas.
@@ -12,12 +13,11 @@ export function computeSimilarity(
   dimensionDeltas: Record<DimensionKey, number>
 ): "low" | "medium" | "high" {
   const threshold = 0.8;
-  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
   
   let similarCount = 0;
   let validDimensionsCount = 0;
   
-  for (const key of dimensionKeys) {
+  for (const key of DIMENSIONS) {
     const delta = dimensionDeltas[key];
     // Only count valid dimensions (not NaN)
     if (typeof delta === "number" && !isNaN(delta)) {

@@ -1,5 +1,5 @@
 import type { DimensionKey } from "@/domain/quiz/types";
-import { levelOfDimension } from "@/domain/quiz/dimensions";
+import { DIMENSIONS, levelOfDimension } from "@/domain/quiz/dimensions";
 
 /**
  * Relational content generator for the "ذهن ما کنار هم" page.
@@ -28,12 +28,13 @@ export function getAlignmentLabel(delta: number): string {
 export function getLargestSimilarityDimension(
   dimensions: Record<DimensionKey, { delta: number; relation: "similar" | "different" | "very_different" }>
 ): DimensionKey | null {
-  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
   const similarDimensions: Array<{ key: DimensionKey; delta: number }> = [];
   
-  for (const key of dimensionKeys) {
-    if (dimensions[key].relation === "similar") {
-      similarDimensions.push({ key, delta: dimensions[key].delta });
+  for (const key of DIMENSIONS) {
+    const dim = dimensions[key];
+    if (!dim) continue; // Null-guard
+    if (dim.relation === "similar") {
+      similarDimensions.push({ key, delta: dim.delta });
     }
   }
   
@@ -60,30 +61,34 @@ export function getLargestSimilarityDimension(
 
 // Get the dimension with largest difference
 // Priority: 1) very_different dimensions first, 2) then by priority order: interpersonal > stickiness > pastBrooding > futureWorry
+// Returns both the selected dimension and whether there was a tie
 export function getLargestDifferenceDimension(
   dimensions: Record<DimensionKey, { delta: number; aScore: number; bScore: number; aLevel: "low" | "medium" | "high"; bLevel: "low" | "medium" | "high"; relation?: "similar" | "different" | "very_different" }>
-): { key: DimensionKey; delta: number; aScore: number; bScore: number; aLevel: "low" | "medium" | "high"; bLevel: "low" | "medium" | "high" } | null {
-  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
+): { key: DimensionKey; delta: number; aScore: number; bScore: number; aLevel: "low" | "medium" | "high"; bLevel: "low" | "medium" | "high"; tied: boolean } | null {
   let maxDelta = -1;
   let maxKey: DimensionKey | null = null;
   const candidates: Array<{ key: DimensionKey; delta: number; relation?: "similar" | "different" | "very_different" }> = [];
 
   // Find all dimensions with the maximum delta (skip NaN/unknown)
-  for (const key of dimensionKeys) {
-    const delta = dimensions[key].delta;
+  for (const key of DIMENSIONS) {
+    const dim = dimensions[key];
+    if (!dim) continue; // Null-guard
+    const delta = dim.delta;
     if (typeof delta === "number" && !isNaN(delta) && delta > maxDelta) {
       maxDelta = delta;
     }
   }
 
   // Collect all dimensions with maxDelta (handles ties) - only valid dimensions
-  for (const key of dimensionKeys) {
-    const delta = dimensions[key].delta;
+  for (const key of DIMENSIONS) {
+    const dim = dimensions[key];
+    if (!dim) continue; // Null-guard
+    const delta = dim.delta;
     if (typeof delta === "number" && !isNaN(delta) && Math.abs(delta - maxDelta) < 0.01) {
       candidates.push({ 
         key, 
         delta,
-        relation: dimensions[key].relation
+        relation: dim.relation
       });
     }
   }
@@ -108,13 +113,20 @@ export function getLargestDifferenceDimension(
 
   if (!maxKey) return null;
 
+  const maxDim = dimensions[maxKey];
+  if (!maxDim) return null; // Null-guard
+
+  // Check if there was a tie: if candidatesToUse has more than 1 item, it's a tie
+  const tied = candidatesToUse.length > 1;
+
   return {
     key: maxKey,
-    delta: dimensions[maxKey].delta,
-    aScore: dimensions[maxKey].aScore,
-    bScore: dimensions[maxKey].bScore,
-    aLevel: dimensions[maxKey].aLevel,
-    bLevel: dimensions[maxKey].bLevel,
+    delta: maxDim.delta,
+    aScore: maxDim.aScore,
+    bScore: maxDim.bScore,
+    aLevel: maxDim.aLevel,
+    bLevel: maxDim.bLevel,
+    tied,
   };
 }
 
@@ -451,10 +463,9 @@ export function getDimensionNameForSnapshot(dimensionKey: DimensionKey): string 
 export function shouldShowCTA(
   dimensions: Record<DimensionKey, { aLevel: "low" | "medium" | "high"; bLevel: "low" | "medium" | "high" }>
 ): boolean {
-  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
-  
-  for (const key of dimensionKeys) {
+  for (const key of DIMENSIONS) {
     const dim = dimensions[key];
+    if (!dim) continue; // Null-guard
     if (dim.aLevel !== "low" || dim.bLevel !== "low") {
       return true; // At least one user has MEDIUM or HIGH on at least one dimension
     }
@@ -477,11 +488,12 @@ export function shouldShowCTA(
 export function getMisunderstandingRisk(
   dimensions: Record<DimensionKey, { relation: "similar" | "different" | "very_different" }>
 ): "low" | "medium" | "high" {
-  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
   let veryDifferentCount = 0;
   
-  for (const key of dimensionKeys) {
-    if (dimensions[key].relation === "very_different") {
+  for (const key of DIMENSIONS) {
+    const dim = dimensions[key];
+    if (!dim) continue; // Null-guard
+    if (dim.relation === "very_different") {
       veryDifferentCount++;
     }
   }
@@ -510,24 +522,24 @@ export function getMisunderstandingRiskText(risk: "low" | "medium" | "high"): st
 export function getTopDimensionForPerson(
   dimensionScores: Record<DimensionKey, number>
 ): DimensionKey | null {
-  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
-  
   // Find max score
   let maxScore = -1;
-  for (const key of dimensionKeys) {
-    if (dimensionScores[key] > maxScore) {
-      maxScore = dimensionScores[key];
+  for (const key of DIMENSIONS) {
+    const score = dimensionScores[key];
+    if (typeof score === "number" && !isNaN(score) && score > maxScore) {
+      maxScore = score;
     }
   }
   
   // Collect all dimensions with max score
   const candidates: Array<{ key: DimensionKey; score: number; level: "low" | "medium" | "high" }> = [];
-  for (const key of dimensionKeys) {
-    if (Math.abs(dimensionScores[key] - maxScore) < 0.01) {
+  for (const key of DIMENSIONS) {
+    const score = dimensionScores[key];
+    if (typeof score === "number" && !isNaN(score) && Math.abs(score - maxScore) < 0.01) {
       candidates.push({
         key,
-        score: dimensionScores[key],
-        level: levelOfDimension(dimensionScores[key])
+        score,
+        level: levelOfDimension(score)
       });
     }
   }
@@ -540,11 +552,12 @@ export function getTopDimensionForPerson(
   const topLevel = candidates[0].level;
   const topLevelCandidates = candidates.filter(c => c.level === topLevel);
   
-  // Tie-break 2: Priority order: interpersonal > stickiness > pastBrooding > futureWorry
+  // Tie-break 2: Stable order (use DIMENSIONS order) for deterministic selection
+  // When all dimensions are tied (e.g., all 0), pick first in stable order: stickiness, pastBrooding, futureWorry, interpersonal
   if (topLevelCandidates.length > 1) {
-    const priorityOrder: DimensionKey[] = ["interpersonal", "stickiness", "pastBrooding", "futureWorry"];
-    for (const priorityKey of priorityOrder) {
-      const candidate = topLevelCandidates.find(c => c.key === priorityKey);
+    // Use stable DIMENSIONS order, not priority order
+    for (const key of DIMENSIONS) {
+      const candidate = topLevelCandidates.find(c => c.key === key);
       if (candidate) {
         return candidate.key;
       }
@@ -786,12 +799,13 @@ export function generateDimensionSummary(
 export function getSimilaritiesAndDifferences(
   dimensions: Record<DimensionKey, { relation: "similar" | "different" | "very_different"; delta: number }>
 ): { similarities: DimensionKey[]; differences: DimensionKey[] } {
-  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
   const similarities: DimensionKey[] = [];
   const differences: DimensionKey[] = [];
   
-  for (const key of dimensionKeys) {
-    if (dimensions[key].relation === "similar") {
+  for (const key of DIMENSIONS) {
+    const dim = dimensions[key];
+    if (!dim) continue; // Null-guard
+    if (dim.relation === "similar") {
       similarities.push(key);
     } else {
       differences.push(key);
@@ -799,12 +813,17 @@ export function getSimilaritiesAndDifferences(
   }
   
   // Sort differences by delta (descending)
-  differences.sort((a, b) => dimensions[b].delta - dimensions[a].delta);
+  differences.sort((a, b) => {
+    const dimA = dimensions[a];
+    const dimB = dimensions[b];
+    if (!dimA || !dimB) return 0; // Null-guard
+    return dimB.delta - dimA.delta;
+  });
   
   return { similarities, differences };
 }
 
-import { formatInviteText } from "@/utils/inviteCta";
+import { buildInviteTextForCopy } from "@/utils/inviteCta";
 
 // Update generateSafeShareText with standard text
 export function generateSafeShareText(
@@ -824,7 +843,7 @@ export function generateSafeShareText(
   }
 
   lines.push("");
-  lines.push(formatInviteText(true)); // Include URL for share text
+  lines.push(buildInviteTextForCopy()); // CTA + URL on separate line
 
   return lines.join("\n");
 }
@@ -842,8 +861,7 @@ if (import.meta.env.DEV) {
   }
   
   // Test all dimension keys with very_different
-  const dimensionKeys: DimensionKey[] = ["stickiness", "pastBrooding", "futureWorry", "interpersonal"];
-  for (const key of dimensionKeys) {
+  for (const key of DIMENSIONS) {
     const result = generateMisunderstandingLoop(key, "very_different");
     if (!Array.isArray(result) || result.length === 0) {
       console.error(`[relationalContent] DEV ASSERTION FAILED: generateMisunderstandingLoop('${key}', 'very_different') returned invalid result:`, result);
