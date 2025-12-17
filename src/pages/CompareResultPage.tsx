@@ -434,6 +434,11 @@ function formatExpiresAt(expiresAt: string | null): string {
 /**
  * Masks phone number for display (safety guardrail)
  * Shows only first 3 and last 2 digits: +98***1234
+ * 
+ * INTENTIONALLY UNUSED: Phone numbers are never displayed in Compare Minds outputs
+ * (UI, PDF, or share text). This function is kept as defensive coding for potential
+ * future features that might need phone display. If phone display is added, use this
+ * function to mask phone numbers before rendering.
  */
 function maskPhone(phone: string | null | undefined): string {
   if (!phone || typeof phone !== "string") return "";

@@ -444,6 +444,10 @@ export const CONVERSATION_STARTERS = [
 ];
 
 // Safety statement (Section 6)
+// LEGACY: This constant is from the old compare flow and is only used as a fallback
+// in CompareResultPage when narratives are not available. The canonical safety text
+// comes from the template engine via getCompareNarratives().safetyText.
+// This constant should NOT be used in new code - always use narratives.safetyText.
 export const SAFETY_STATEMENT = `این مقایسه برای درک بهتر ذهن‌هاست، نه قضاوت یا تشخیص.
 نتایج تقریبی‌اند و ممکن است با شرایطی مثل استرس، خواب یا موقعیت تغییر کنند.
 تفاوت ذهنی ≠ مشکل رابطه‌ای.`;
