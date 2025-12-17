@@ -57,8 +57,20 @@ export default function CompareInvitePage() {
           length: trimmedToken.length,
         });
 
+        // Mark invite as opened (idempotent)
+        await supabase.rpc('mark_compare_invite_opened', {
+          p_invite_token: trimmedToken
+        });
+
+        // Get inviter display name
+        const { data: nameData, error: nameError } = await supabase.rpc(
+          'get_compare_inviter_display_name_by_token',
+          { p_invite_token: trimmedToken }
+        );
+
+        // Get session data
         const { data, error } = await supabase.rpc('get_compare_token_by_token', {
-          p_token: trimmedToken
+          p_invite_token: trimmedToken
         });
 
         // Debug: Log RPC response
@@ -150,8 +162,9 @@ export default function CompareInvitePage() {
           attempt_b_id: tokenRow.attempt_b_id,
         });
 
-        // Get inviter name from RPC payload (from compare_sessions.inviter_first_name/last_name)
-        // This is the single source of truth - no fallback to attempts table
+        // Get inviter name from RPC (from attempts table via join)
+        // Single source of truth: attempts.user_first_name/last_name
+        const inviterDisplayName = nameData || '';
         const inviterFirstName = (tokenRow as any).inviter_first_name || null;
         const inviterLastName = (tokenRow as any).inviter_last_name || null;
 
@@ -163,9 +176,12 @@ export default function CompareInvitePage() {
           status: tokenRow.status === "completed" ? "completed" : "pending",
           createdAt: new Date().toISOString(),
           expiresAt: tokenRow.expires_at,
-          inviterFirstName: inviterFirstName, // From compare_sessions.inviter_first_name
-          inviterLastName: inviterLastName, // From compare_sessions.inviter_last_name
+          inviterFirstName: inviterFirstName, // From attempts table via join
+          inviterLastName: inviterLastName, // From attempts table via join
         };
+
+        // Store inviter display name for UI
+        (sessionData as any).inviterDisplayName = inviterDisplayName;
 
         setSession(sessionData);
 
@@ -178,8 +194,15 @@ export default function CompareInvitePage() {
             expiresAt: sessionData.expiresAt,
             inviterFirstName: sessionData.inviterFirstName,
             inviterLastName: sessionData.inviterLastName,
-            source: "compare_sessions table (persisted)",
+            inviterDisplayName: inviterDisplayName,
+            source: "attempts table (via join)",
+            nameError: nameError ? nameError.message : null,
           });
+          
+          // DEV warning if session valid but name missing
+          if (!inviterDisplayName && tokenRow.status === 'pending' && !isExpired) {
+            console.warn("[CompareInvitePage] ⚠️ Session valid but inviter name is empty");
+          }
         }
 
         // If status is 'completed', navigate to result page
@@ -323,12 +346,28 @@ export default function CompareInvitePage() {
     return null;
   }
 
-  // Compute inviter display name from payload (compare_sessions.inviter_first_name/last_name)
+  // Compute inviter display name from RPC payload (attempts table via join)
   // Single source of truth: backend payload, no localStorage/cache assumptions
   const inviterName = (() => {
+    // Use inviterDisplayName from RPC if available
+    const displayName = (session as any).inviterDisplayName;
+    if (displayName && displayName.trim()) {
+      return displayName.trim();
+    }
+    
+    // Fallback to first/last name from session
     const nameParts = [session.inviterFirstName, session.inviterLastName].filter(Boolean);
     const fullName = nameParts.join(" ").trim();
-    return fullName || session.inviterFirstName || "یک نفر";
+    
+    if (fullName) {
+      return fullName;
+    }
+    
+    // Final fallback: generic message (only if session is valid but name missing)
+    if (import.meta.env.DEV) {
+      console.warn("[CompareInvitePage] Using fallback 'یک نفر' - session valid but name missing");
+    }
+    return "یک نفر";
   })();
 
   if (import.meta.env.DEV) {

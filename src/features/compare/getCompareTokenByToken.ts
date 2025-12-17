@@ -42,7 +42,7 @@ export async function getCompareTokenByToken(
   // Call RPC
   const { data: rpcData, error: rpcError } = await supabase.rpc(
     "get_compare_token_by_token",
-    { p_token: trimmedToken }
+    { p_invite_token: trimmedToken }
   );
 
   if (rpcError) {

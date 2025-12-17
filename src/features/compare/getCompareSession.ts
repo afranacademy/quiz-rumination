@@ -33,7 +33,7 @@ export async function getCompareSession(token: string): Promise<CompareSession |
 
   // Use RPC to fetch token from compare_tokens table (doesn't filter by expiry)
   const { data: rpcData, error: rpcError } = await supabase.rpc("get_compare_token_by_token", {
-    p_token: trimmedToken,
+    p_invite_token: trimmedToken,
   });
 
   if (rpcError) {

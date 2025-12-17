@@ -697,14 +697,14 @@ export default function CompareResultPage() {
         if (import.meta.env.DEV) {
         console.log("[CompareResultPage] 🔵 Calling RPC get_compare_payload_by_token");
         console.log("[CompareResultPage] RPC Payload:", { 
-          p_token: trimmedToken.substring(0, 12) + "...",
+          p_invite_token: trimmedToken.substring(0, 12) + "...",
           tokenLength: trimmedToken.length,
         });
         }
 
       const { data: rpcData, error: rpcError } = await supabase.rpc(
         "get_compare_payload_by_token",
-          { p_token: trimmedToken }
+          { p_invite_token: trimmedToken }
         );
 
       // DEV: Store RPC data for diagnostics
@@ -1039,25 +1039,34 @@ export default function CompareResultPage() {
         });
       }
 
-    // Build AttemptData objects - use names from compare_sessions (single source of truth)
-    // Priority: 1) inviter_first_name/inviter_last_name from compare_sessions (persisted)
-    //           2) invitee_first_name/invitee_last_name from compare_sessions (persisted)
-    //           3) Fallback to a_user_first_name/b_user_first_name from attempts (for backward compatibility)
+    // Build AttemptData objects - use names from payload (attempts table via join)
+    // Single source of truth: name_a and name_b from RPC (built from attempts.user_first_name/last_name)
     // NO localStorage, NO cache, NO additional fetch from attempts table
     
-    // Get names from compare_sessions (persisted when token created/completed)
-    let attemptAFirstName: string | null = rpcData.inviter_first_name || null;
-    let attemptALastName: string | null = rpcData.inviter_last_name || null;
-    let attemptBFirstName: string | null = rpcData.invitee_first_name || null;
-    let attemptBLastName: string | null = rpcData.invitee_last_name || null;
+    // Parse name_a and name_b from payload (full names from attempts table)
+    let attemptAFirstName: string | null = null;
+    let attemptALastName: string | null = null;
+    let attemptBFirstName: string | null = null;
+    let attemptBLastName: string | null = null;
     
-    // Fallback to attempt fields only if compare_sessions names are missing (backward compatibility)
-    if (!attemptAFirstName) {
+    // name_a is full name from attempts table (user_first_name + user_last_name)
+    if (rpcData.name_a) {
+      const nameAParts = rpcData.name_a.trim().split(/\s+/);
+      attemptAFirstName = nameAParts[0] || null;
+      attemptALastName = nameAParts.length > 1 ? nameAParts.slice(1).join(' ') : null;
+    } else {
+      // Fallback to individual fields if name_a not available
       attemptAFirstName = rpcData.a_user_first_name || null;
       attemptALastName = rpcData.a_user_last_name || null;
     }
     
-    if (!attemptBFirstName) {
+    // name_b is full name from attempts table (if attempt_b exists)
+    if (rpcData.name_b) {
+      const nameBParts = rpcData.name_b.trim().split(/\s+/);
+      attemptBFirstName = nameBParts[0] || null;
+      attemptBLastName = nameBParts.length > 1 ? nameBParts.slice(1).join(' ') : null;
+    } else if (rpcData.attempt_b_id) {
+      // Fallback to individual fields if name_b not available but attempt_b exists
       attemptBFirstName = rpcData.b_user_first_name || null;
       attemptBLastName = rpcData.b_user_last_name || null;
     }
@@ -1076,16 +1085,27 @@ export default function CompareResultPage() {
         if (import.meta.env.DEV) {
       console.log("[CompareResultPage] 🔍 Names from payload:", {
         token: token ? token.substring(0, 12) + "..." : "N/A",
-        inviter_first_name: rpcData.inviter_first_name,
-        inviter_last_name: rpcData.inviter_last_name,
-        invitee_first_name: rpcData.invitee_first_name,
-        invitee_last_name: rpcData.invitee_last_name,
+        name_a: rpcData.name_a,
+        name_b: rpcData.name_b,
+        attempt_a_id: rpcData.attempt_a_id,
+            attempt_b_id: rpcData.attempt_b_id,
         attemptAFirstName,
         attemptALastName,
         attemptBFirstName,
         attemptBLastName,
-        source: "compare_sessions table (persisted)",
+        source: "attempts table (via join in RPC)",
       });
+    }
+    
+    // CRITICAL: If attempt_b_id is null, Compare Result should not render
+    // Show "waiting for person B" page instead
+    if (!rpcData.attempt_b_id || rpcData.status !== 'completed') {
+        if (import.meta.env.DEV) {
+        console.log("[CompareResultPage] ⚠️ Attempt B not completed yet - should show waiting page");
+        }
+      setError("منتظر تکمیل آزمون نفر دوم هستیم. لطفاً صبر کنید.");
+      setLoading(false);
+      return;
     }
     
     // Use parsed dimension scores (will handle null/undefined gracefully)

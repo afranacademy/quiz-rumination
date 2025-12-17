@@ -545,7 +545,7 @@ export default function QuizPage() {
         // Ensure token is trimmed before RPC call
         const trimmedToken = liveCompareToken.trim();
         const rpcPayload = {
-          p_token: trimmedToken,
+          p_invite_token: trimmedToken,
           p_attempt_b_id: currentAttemptId,
         };
         

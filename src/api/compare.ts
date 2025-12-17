@@ -52,7 +52,7 @@ export async function fetchSessionByToken(token: string): Promise<CompareSession
   }
 
   const { data, error } = await supabase.rpc("get_compare_session_by_token", {
-    p_token: token,
+    token_param: token,
   });
 
   if (error) {
@@ -91,7 +91,7 @@ export async function completeSession(token: string, attemptBId: string): Promis
   }
 
   const { data, error } = await supabase.rpc("complete_compare_session", {
-    p_token: token,
+    p_invite_token: token,
     p_attempt_b_id: attemptBId,
   });
 

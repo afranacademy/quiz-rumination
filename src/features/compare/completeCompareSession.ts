@@ -9,7 +9,7 @@ export async function completeCompareSession(
   attemptBId: string
 ): Promise<void> {
   const rpcPayload = {
-    p_token: token,
+    p_invite_token: token,
     p_attempt_b_id: attemptBId,
   };
 
@@ -24,7 +24,7 @@ export async function completeCompareSession(
   // Trim token before RPC call
   const trimmedToken = token.trim();
   const trimmedRpcPayload = {
-    p_token: trimmedToken,
+    p_invite_token: trimmedToken,
     p_attempt_b_id: attemptBId,
   };
 
