@@ -97,6 +97,8 @@ type ComparePayloadRPCResponse = {
   b_score_band_title: string | null;
   b_user_first_name: string | null;
   b_user_last_name: string | null;
+  name_a: string | null; // Name from compare_tokens.name_a with fallback
+  name_b: string | null; // Name from compare_tokens.name_b with fallback
 };
 
 type ScoreBand = {
@@ -1038,29 +1040,57 @@ export default function CompareResultPage() {
     // Build AttemptData objects - handle multiple RPC response shapes
     // CRITICAL: Defensive Normalizer - supports both new and old aliases, flat and nested structures
     // This ensures we read names correctly even if RPC contract changes or is deployed incorrectly
-    // Priority: 1) Flat fields (a_user_first_name), 2) Nested (attempt_a.user_first_name), 3) Old aliases (a_first)
-    const aFirst = (rpcData as any).a_user_first_name 
-      ?? (rpcData as any).attempt_a?.user_first_name 
-      ?? (rpcData as any).a_first 
-      ?? null;
-    const aLast  = (rpcData as any).a_user_last_name  
-      ?? (rpcData as any).attempt_a?.user_last_name  
-      ?? (rpcData as any).a_last  
-      ?? null;
-    const bFirst = (rpcData as any).b_user_first_name 
-      ?? (rpcData as any).attempt_b?.user_first_name 
-      ?? (rpcData as any).b_first 
-      ?? null;
-    const bLast  = (rpcData as any).b_user_last_name  
-      ?? (rpcData as any).attempt_b?.user_last_name  
-      ?? (rpcData as any).b_last  
-      ?? null;
+    // Priority: 1) name_a/name_b from compare_tokens (NEW), 2) Flat fields (a_user_first_name), 3) Nested (attempt_a.user_first_name), 4) Old aliases (a_first)
+    // Use name_a/name_b from compare_tokens if available (these are set when token is created/completed)
+    const nameA = (rpcData as any).name_a ?? null;
+    const nameB = (rpcData as any).name_b ?? null;
     
-    // Store raw values (null or string) - NO fallback here
-    let attemptAFirstName: string | null = aFirst;
-    let attemptALastName: string | null = aLast;
-    let attemptBFirstName: string | null = bFirst;
-    let attemptBLastName: string | null = bLast;
+    // Parse name_a/name_b if they contain full name (first + last), otherwise fallback to individual fields
+    let attemptAFirstName: string | null = null;
+    let attemptALastName: string | null = null;
+    let attemptBFirstName: string | null = null;
+    let attemptBLastName: string | null = null;
+    
+    if (nameA) {
+      // name_a is a full name string, try to split it
+      const nameAParts = nameA.trim().split(/\s+/);
+      attemptAFirstName = nameAParts[0] || null;
+      attemptALastName = nameAParts.length > 1 ? nameAParts.slice(1).join(' ') : null;
+    }
+    
+    if (nameB) {
+      // name_b is a full name string, try to split it
+      const nameBParts = nameB.trim().split(/\s+/);
+      attemptBFirstName = nameBParts[0] || null;
+      attemptBLastName = nameBParts.length > 1 ? nameBParts.slice(1).join(' ') : null;
+    }
+    
+    // Fallback to individual fields if name_a/name_b are not available
+    if (!attemptAFirstName) {
+      const aFirst = (rpcData as any).a_user_first_name 
+        ?? (rpcData as any).attempt_a?.user_first_name 
+        ?? (rpcData as any).a_first 
+        ?? null;
+      const aLast  = (rpcData as any).a_user_last_name  
+        ?? (rpcData as any).attempt_a?.user_last_name  
+        ?? (rpcData as any).a_last  
+        ?? null;
+      attemptAFirstName = aFirst;
+      attemptALastName = aLast;
+    }
+    
+    if (!attemptBFirstName) {
+      const bFirst = (rpcData as any).b_user_first_name 
+        ?? (rpcData as any).attempt_b?.user_first_name 
+        ?? (rpcData as any).b_first 
+        ?? null;
+      const bLast  = (rpcData as any).b_user_last_name  
+        ?? (rpcData as any).attempt_b?.user_last_name  
+        ?? (rpcData as any).b_last  
+        ?? null;
+      attemptBFirstName = bFirst;
+      attemptBLastName = bLast;
+    }
     let attemptATotalScore: number | null = rpcData.a_total_score;
     let attemptBTotalScore: number | null = rpcData.b_total_score;
     

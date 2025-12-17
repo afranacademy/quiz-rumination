@@ -150,6 +150,17 @@ export default function CompareInvitePage() {
           attempt_b_id: tokenRow.attempt_b_id,
         });
 
+        // Parse name_a from token row if available (from compare_tokens.name_a)
+        let inviterFirstName: string | null = null;
+        let inviterLastName: string | null = null;
+        
+        if ((tokenRow as any).name_a) {
+          // name_a is a full name string, try to split it
+          const nameAParts = ((tokenRow as any).name_a as string).trim().split(/\s+/);
+          inviterFirstName = nameAParts[0] || null;
+          inviterLastName = nameAParts.length > 1 ? nameAParts.slice(1).join(' ') : null;
+        }
+
         // Construct session data from token row (we already have all the data we need)
         const sessionData: CompareSession = {
           id: tokenRow.compare_id,
@@ -158,8 +169,8 @@ export default function CompareInvitePage() {
           status: tokenRow.status === "completed" ? "completed" : "pending",
           createdAt: new Date().toISOString(), // We don't have created_at from token RPC, but it's not critical
           expiresAt: tokenRow.expires_at,
-          inviterFirstName: null, // Will be fetched below
-          inviterLastName: null, // Will be fetched below
+          inviterFirstName: inviterFirstName, // Use name_a from compare_tokens if available
+          inviterLastName: inviterLastName, // Use name_a from compare_tokens if available
         };
 
         setSession(sessionData);
@@ -176,9 +187,10 @@ export default function CompareInvitePage() {
           });
         }
 
-        // C) Fetch inviter name from attempts table if not in session data
-        // If RLS blocks, fallback to RPC function (SECURITY DEFINER)
-        if (sessionData.attemptAId) {
+        // C) Fetch inviter name from attempts table only if name_a is not available
+        // name_a from compare_tokens is the primary source (set when token is created)
+        // Fallback to attempts table only if name_a is missing
+        if (sessionData.attemptAId && !sessionData.inviterFirstName) {
           const fetchInviterName = async () => {
             try {
               // First try: Direct query from attempts table
@@ -195,16 +207,16 @@ export default function CompareInvitePage() {
                   .trim();
                 const displayName = fullName || attempt.user_first_name || null;
                 
-                if (displayName && displayName !== sessionData.inviterFirstName) {
+                if (displayName) {
                   // Update session data with fetched name
                   setSession({
                     ...sessionData,
-                    inviterFirstName: attempt.user_first_name || sessionData.inviterFirstName,
-                    inviterLastName: attempt.user_last_name || sessionData.inviterLastName,
+                    inviterFirstName: attempt.user_first_name || null,
+                    inviterLastName: attempt.user_last_name || null,
                   });
                   
                   if (import.meta.env.DEV) {
-                    console.log("[CompareInvitePage] ✅ Fetched inviter name from attempts table:", {
+                    console.log("[CompareInvitePage] ✅ Fetched inviter name from attempts table (fallback):", {
                       user_first_name: attempt.user_first_name,
                       user_last_name: attempt.user_last_name,
                       displayName,
@@ -233,16 +245,16 @@ export default function CompareInvitePage() {
                     .trim();
                   const displayName = fullName || rpcResult.user_first_name || null;
                   
-                  if (displayName && displayName !== sessionData.inviterFirstName) {
+                  if (displayName) {
                     // Update session data with fetched name from RPC
                     setSession({
                       ...sessionData,
-                      inviterFirstName: rpcResult.user_first_name || sessionData.inviterFirstName,
-                      inviterLastName: rpcResult.user_last_name || sessionData.inviterLastName,
+                      inviterFirstName: rpcResult.user_first_name || null,
+                      inviterLastName: rpcResult.user_last_name || null,
                     });
                     
                     if (import.meta.env.DEV) {
-                      console.log("[CompareInvitePage] ✅ Fetched inviter name from RPC (SECURITY DEFINER):", {
+                      console.log("[CompareInvitePage] ✅ Fetched inviter name from RPC (SECURITY DEFINER, fallback):", {
                         user_first_name: rpcResult.user_first_name,
                         user_last_name: rpcResult.user_last_name,
                         displayName,
