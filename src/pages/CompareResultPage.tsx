@@ -18,7 +18,7 @@ import { computeSimilarity } from "@/features/compare/computeSimilarity";
 import { useAnonAuth } from "@/hooks/useAnonAuth";
 import { trackShareEvent } from "@/lib/trackShareEvent";
 import { AppModal } from "@/components/AppModal";
-import { supersedePendingCompareToken } from "@/features/compare/supersedePendingCompareToken";
+import { createCompareInvite } from "@/features/compare/createCompareInvite";
 import { getLatestCompletedAttempt } from "@/features/compare/getLatestCompletedAttempt";
 import { COURSE_LINK } from "@/constants/links";
 import {
@@ -1452,20 +1452,19 @@ export default function CompareResultPage() {
       
       setIsCreatingInvite(true);
       try {
-        // Use supersede to invalidate old tokens and create new one (7 days = 10080 minutes)
-        const result = await supersedePendingCompareToken(attemptA.id, 10080);
-        const newUrl = `${window.location.origin}/compare/invite/${result.invite_token}`;
+        // Create new invite using authoritative RPC (7 days = 10080 minutes)
+        const result = await createCompareInvite(attemptA.id, 10080);
         
         if (import.meta.env.DEV) {
-          console.log("[CompareResultPage] ✅ New invite link created via supersede:", {
+          console.log("[CompareResultPage] ✅ New invite link created:", {
             token: result.invite_token.substring(0, 12) + "...",
-            url: newUrl,
+            url: result.url,
             expiresAt: result.expires_at,
           });
         }
         
         // Navigate to new invite link
-        navigate(newUrl);
+        navigate(result.url);
         toast.success("لینک جدید ساخته شد");
       } catch (err) {
         if (import.meta.env.DEV) {
@@ -1648,20 +1647,20 @@ export default function CompareResultPage() {
       
       setIsCreatingInvite(true);
       try {
-        // Use supersede to invalidate old tokens and create new one (7 days = 10080 minutes)
-        const result = await supersedePendingCompareToken(attemptAId, 10080);
+        // Create new invite using authoritative RPC (7 days = 10080 minutes)
+        const result = await createCompareInvite(attemptAId, 10080);
         
         if (import.meta.env.DEV) {
-          console.log("[CompareResultPage] ✅ New invite link created via supersede:", {
+          console.log("[CompareResultPage] ✅ New invite link created:", {
             token: result.invite_token.substring(0, 12) + "...",
-            url: `${window.location.origin}/compare/invite/${result.invite_token}`,
+            url: result.url,
             expiresAt: result.expires_at,
           });
         }
         
         setInviteData({
           token: result.invite_token,
-          url: `${window.location.origin}/compare/invite/${result.invite_token}`,
+          url: result.url,
           expiresAt: result.expires_at,
         });
         setInviteModalOpen(true);

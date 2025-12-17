@@ -36,11 +36,24 @@ export async function createInvite(attemptAId: string): Promise<string> {
     throw new Error(`Failed to create invite: ${error.message}`);
   }
 
-  if (!data || !data.invite_token) {
-    throw new Error("Invalid response from create_compare_invite RPC");
+  // RPC returns TABLE (session_id, invite_token, expires_at)
+  let resultRow: any = null;
+  if (Array.isArray(data)) {
+    if (data.length === 0) {
+      throw new Error("Invalid response from create_compare_invite RPC: empty result");
+    }
+    resultRow = data[0];
+  } else if (data && typeof data === "object") {
+    resultRow = data;
+  } else {
+    throw new Error("Invalid response from create_compare_invite RPC: unexpected format");
   }
 
-  return data.invite_token;
+  if (!resultRow.invite_token || typeof resultRow.invite_token !== "string") {
+    throw new Error("Invalid response from create_compare_invite RPC: missing invite_token");
+  }
+
+  return resultRow.invite_token;
 }
 
 /**

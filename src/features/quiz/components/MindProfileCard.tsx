@@ -54,7 +54,7 @@ export function MindProfileCard({ template, dimensionScores, attemptId }: MindPr
     setIsCreatingInvite(true);
     try {
       const result = await createCompareInvite(attemptId, 60);
-      const inviteUrl = `${window.location.origin}/compare/${result.invite_token}`;
+      const inviteUrl = `${window.location.origin}/compare/invite/${result.invite_token}`;
       
       const copied = await copyText(inviteUrl);
       if (copied) {

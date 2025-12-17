@@ -5,8 +5,7 @@ import { Card, CardContent } from "@/app/components/ui/card";
 import { AppModal } from "@/components/AppModal";
 import { Share2, Check, Copy } from "lucide-react";
 import { toast } from "sonner";
-import { getOrCreatePendingCompareToken } from "@/features/compare/getOrCreatePendingCompareToken";
-import { supersedePendingCompareToken } from "@/features/compare/supersedePendingCompareToken";
+import { createCompareInvite } from "@/features/compare/createCompareInvite";
 import { getLatestCompletedAttempt } from "@/features/compare/getLatestCompletedAttempt";
 import { useAnonAuth } from "@/hooks/useAnonAuth";
 import { supabase } from "@/lib/supabaseClient";
@@ -77,13 +76,13 @@ export function CompareInviteSection({ attemptId: _attemptId }: CompareInviteSec
           // First try to load from localStorage
           const storedToken = loadTokenFromStorage(attemptAId);
           
-          // Fetch current token from server (will reuse if exists, create if not)
+          // Fetch current token from server - create new invite using authoritative RPC
           setInviteLoading(true);
           try {
-            const result = await getOrCreatePendingCompareToken(attemptAId, 1440);
-            setInviteToken(result.token);
-            setTokenStatus(result.status);
-            saveTokenToStorage(attemptAId, result.token, result.status);
+            const result = await createCompareInvite(attemptAId, 1440);
+            setInviteToken(result.invite_token);
+            setTokenStatus("pending"); // New invites are always pending
+            saveTokenToStorage(attemptAId, result.invite_token, "pending");
           } catch (error) {
             // If fetch fails and we had a stored token, keep it
             if (!storedToken) {
@@ -218,33 +217,24 @@ export function CompareInviteSection({ attemptId: _attemptId }: CompareInviteSec
         return;
       }
 
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareInviteSection.tsx:147',message:'About to call getOrCreatePendingCompareToken',data:{attemptAId,expiresInMinutes:1440},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
-
-      // Get or create pending compare token (24 hours = 1440 minutes)
-      const result = await getOrCreatePendingCompareToken(attemptAId, 1440);
-
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareInviteSection.tsx:150',message:'getOrCreatePendingCompareToken succeeded',data:{hasResult:!!result,token:result?.token?.substring(0,12),compareId:result?.compare_id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
+      // Create new invite using authoritative RPC (24 hours = 1440 minutes)
+      const result = await createCompareInvite(attemptAId, 1440);
 
       if (import.meta.env.DEV) {
-        const computedUrl = `${window.location.origin}/compare/invite/${result.token}`;
-        console.log("[CompareInviteSection] ✅ Token retrieved/created:", {
-          compare_id: result.compare_id,
-          token: result.token.substring(0, 12) + "...",
+        const computedUrl = `${window.location.origin}/compare/invite/${result.invite_token}`;
+        console.log("[CompareInviteSection] ✅ Invite created:", {
+          session_id: result.session_id,
+          invite_token: result.invite_token.substring(0, 12) + "...",
           expires_at: result.expires_at,
-          status: result.status,
           inviteUrl: computedUrl,
         });
       }
 
       // Set token and status, then show modal (URL is computed from token)
-      setInviteToken(result.token);
-      setTokenStatus(result.status);
+      setInviteToken(result.invite_token);
+      setTokenStatus("pending"); // New invites are always pending
       setCurrentAttemptAId(attemptAId);
-      saveTokenToStorage(attemptAId, result.token, result.status);
+      saveTokenToStorage(attemptAId, result.invite_token, "pending");
       setModalState({ type: "invite" });
     } catch (error) {
       // #region agent log
@@ -399,11 +389,11 @@ export function CompareInviteSection({ attemptId: _attemptId }: CompareInviteSec
         return;
       }
 
-        // Supersede old tokens and create new one (24 hours = 1440 minutes)
-        const result = await supersedePendingCompareToken(attemptAId, 1440);
+        // Create new invite using authoritative RPC (24 hours = 1440 minutes)
+        const result = await createCompareInvite(attemptAId, 1440);
 
         if (import.meta.env.DEV) {
-          console.log("[CompareInviteSection] ✅ New token created after superseding:", {
+          console.log("[CompareInviteSection] ✅ New invite created:", {
             session_id: result.session_id,
             invite_token: result.invite_token.substring(0, 12) + "...",
             expires_at: result.expires_at,
