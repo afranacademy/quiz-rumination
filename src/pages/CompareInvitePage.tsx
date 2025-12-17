@@ -150,27 +150,21 @@ export default function CompareInvitePage() {
           attempt_b_id: tokenRow.attempt_b_id,
         });
 
-        // Parse name_a from token row if available (from compare_tokens.name_a)
-        let inviterFirstName: string | null = null;
-        let inviterLastName: string | null = null;
-        
-        if ((tokenRow as any).name_a) {
-          // name_a is a full name string, try to split it
-          const nameAParts = ((tokenRow as any).name_a as string).trim().split(/\s+/);
-          inviterFirstName = nameAParts[0] || null;
-          inviterLastName = nameAParts.length > 1 ? nameAParts.slice(1).join(' ') : null;
-        }
+        // Get inviter name from RPC payload (from compare_sessions.inviter_first_name/last_name)
+        // This is the single source of truth - no fallback to attempts table
+        const inviterFirstName = (tokenRow as any).inviter_first_name || null;
+        const inviterLastName = (tokenRow as any).inviter_last_name || null;
 
-        // Construct session data from token row (we already have all the data we need)
+        // Construct session data from token row
         const sessionData: CompareSession = {
           id: tokenRow.compare_id,
           attemptAId: tokenRow.attempt_a_id,
           attemptBId: tokenRow.attempt_b_id || null,
           status: tokenRow.status === "completed" ? "completed" : "pending",
-          createdAt: new Date().toISOString(), // We don't have created_at from token RPC, but it's not critical
+          createdAt: new Date().toISOString(),
           expiresAt: tokenRow.expires_at,
-          inviterFirstName: inviterFirstName, // Use name_a from compare_tokens if available
-          inviterLastName: inviterLastName, // Use name_a from compare_tokens if available
+          inviterFirstName: inviterFirstName, // From compare_sessions.inviter_first_name
+          inviterLastName: inviterLastName, // From compare_sessions.inviter_last_name
         };
 
         setSession(sessionData);
@@ -184,102 +178,8 @@ export default function CompareInvitePage() {
             expiresAt: sessionData.expiresAt,
             inviterFirstName: sessionData.inviterFirstName,
             inviterLastName: sessionData.inviterLastName,
+            source: "compare_sessions table (persisted)",
           });
-        }
-
-        // C) Fetch inviter name from attempts table only if name_a is not available
-        // name_a from compare_tokens is the primary source (set when token is created)
-        // Fallback to attempts table only if name_a is missing
-        if (sessionData.attemptAId && !sessionData.inviterFirstName) {
-          const fetchInviterName = async () => {
-            try {
-              // First try: Direct query from attempts table
-              const { data: attempt, error: directError } = await supabase
-                .from("attempts")
-                .select("user_first_name, user_last_name")
-                .eq("id", sessionData.attemptAId!)
-                .single();
-              
-              if (!directError && attempt) {
-                const fullName = [attempt.user_first_name, attempt.user_last_name]
-                  .filter(Boolean)
-                  .join(" ")
-                  .trim();
-                const displayName = fullName || attempt.user_first_name || null;
-                
-                if (displayName) {
-                  // Update session data with fetched name
-                  setSession({
-                    ...sessionData,
-                    inviterFirstName: attempt.user_first_name || null,
-                    inviterLastName: attempt.user_last_name || null,
-                  });
-                  
-                  if (import.meta.env.DEV) {
-                    console.log("[CompareInvitePage] ✅ Fetched inviter name from attempts table (fallback):", {
-                      user_first_name: attempt.user_first_name,
-                      user_last_name: attempt.user_last_name,
-                      displayName,
-                    });
-                  }
-                }
-                return; // Success, exit early
-              }
-              
-              // If direct query failed (likely RLS), try RPC function
-              if (directError) {
-                if (import.meta.env.DEV) {
-                  console.warn("[CompareInvitePage] Direct query failed (likely RLS), trying RPC:", directError);
-                }
-                
-                const { data: rpcData, error: rpcError } = await supabase.rpc(
-                  "get_inviter_name_by_attempt_id",
-                  { p_attempt_id: sessionData.attemptAId! }
-                );
-                
-                if (!rpcError && rpcData && rpcData.length > 0) {
-                  const rpcResult = rpcData[0];
-                  const fullName = [rpcResult.user_first_name, rpcResult.user_last_name]
-                    .filter(Boolean)
-                    .join(" ")
-                    .trim();
-                  const displayName = fullName || rpcResult.user_first_name || null;
-                  
-                  if (displayName) {
-                    // Update session data with fetched name from RPC
-                    setSession({
-                      ...sessionData,
-                      inviterFirstName: rpcResult.user_first_name || null,
-                      inviterLastName: rpcResult.user_last_name || null,
-                    });
-                    
-                    if (import.meta.env.DEV) {
-                      console.log("[CompareInvitePage] ✅ Fetched inviter name from RPC (SECURITY DEFINER, fallback):", {
-                        user_first_name: rpcResult.user_first_name,
-                        user_last_name: rpcResult.user_last_name,
-                        displayName,
-                      });
-                    }
-                  }
-                  return; // Success via RPC, exit
-                } else if (rpcError && import.meta.env.DEV) {
-                  console.warn("[CompareInvitePage] RPC also failed:", rpcError);
-                }
-              }
-              
-              // Both methods failed - fallback to session data (already set)
-              if (import.meta.env.DEV) {
-                console.warn("[CompareInvitePage] ⚠️ Both direct query and RPC failed, using session data fallback");
-              }
-            } catch (err) {
-              if (import.meta.env.DEV) {
-                console.warn("[CompareInvitePage] Error fetching inviter name:", err);
-              }
-              // Fallback: use session data (already set)
-            }
-          };
-          
-          fetchInviterName();
         }
 
         // If status is 'completed', navigate to result page
@@ -423,13 +323,12 @@ export default function CompareInvitePage() {
     return null;
   }
 
-  // Compute inviter display name
+  // Compute inviter display name from payload (compare_sessions.inviter_first_name/last_name)
+  // Single source of truth: backend payload, no localStorage/cache assumptions
   const inviterName = (() => {
-    if (session.inviterFirstName) {
-      const fullName = [session.inviterFirstName, session.inviterLastName].filter(Boolean).join(" ").trim();
-      return fullName || session.inviterFirstName;
-    }
-    return "شریک مقایسه‌ات";
+    const nameParts = [session.inviterFirstName, session.inviterLastName].filter(Boolean);
+    const fullName = nameParts.join(" ").trim();
+    return fullName || session.inviterFirstName || "یک نفر";
   })();
 
   if (import.meta.env.DEV) {
@@ -446,7 +345,7 @@ export default function CompareInvitePage() {
         <div className="space-y-2">
           <h1 className="text-2xl text-foreground font-medium">ذهن ما کنار هم</h1>
           <p className="text-sm text-foreground/70">
-            {inviterName} تو رو دعوت کرده به تکمیل این آزمون تا ببینی ذهن‌تون چقدر شبیه یا متفاوته.
+            {inviterName} تورو دعوت کرده به تکمیل این آزمون تا ببینی ذهن‌تون چقدر شبیه یا متفاوته.
           </p>
         </div>
 

@@ -97,8 +97,10 @@ type ComparePayloadRPCResponse = {
   b_score_band_title: string | null;
   b_user_first_name: string | null;
   b_user_last_name: string | null;
-  name_a: string | null; // Name from compare_tokens.name_a with fallback
-  name_b: string | null; // Name from compare_tokens.name_b with fallback
+  inviter_first_name: string | null; // From compare_sessions.inviter_first_name (persisted)
+  inviter_last_name: string | null; // From compare_sessions.inviter_last_name (persisted)
+  invitee_first_name: string | null; // From compare_sessions.invitee_first_name (persisted)
+  invitee_last_name: string | null; // From compare_sessions.invitee_last_name (persisted)
 };
 
 type ScoreBand = {
@@ -1037,155 +1039,53 @@ export default function CompareResultPage() {
         });
       }
 
-    // Build AttemptData objects - handle multiple RPC response shapes
-    // CRITICAL: Defensive Normalizer - supports both new and old aliases, flat and nested structures
-    // This ensures we read names correctly even if RPC contract changes or is deployed incorrectly
-    // Priority: 1) name_a/name_b from compare_tokens (NEW), 2) Flat fields (a_user_first_name), 3) Nested (attempt_a.user_first_name), 4) Old aliases (a_first)
-    // Use name_a/name_b from compare_tokens if available (these are set when token is created/completed)
-    const nameA = (rpcData as any).name_a ?? null;
-    const nameB = (rpcData as any).name_b ?? null;
+    // Build AttemptData objects - use names from compare_sessions (single source of truth)
+    // Priority: 1) inviter_first_name/inviter_last_name from compare_sessions (persisted)
+    //           2) invitee_first_name/invitee_last_name from compare_sessions (persisted)
+    //           3) Fallback to a_user_first_name/b_user_first_name from attempts (for backward compatibility)
+    // NO localStorage, NO cache, NO additional fetch from attempts table
     
-    // Parse name_a/name_b if they contain full name (first + last), otherwise fallback to individual fields
-    let attemptAFirstName: string | null = null;
-    let attemptALastName: string | null = null;
-    let attemptBFirstName: string | null = null;
-    let attemptBLastName: string | null = null;
+    // Get names from compare_sessions (persisted when token created/completed)
+    let attemptAFirstName: string | null = rpcData.inviter_first_name || null;
+    let attemptALastName: string | null = rpcData.inviter_last_name || null;
+    let attemptBFirstName: string | null = rpcData.invitee_first_name || null;
+    let attemptBLastName: string | null = rpcData.invitee_last_name || null;
     
-    if (nameA) {
-      // name_a is a full name string, try to split it
-      const nameAParts = nameA.trim().split(/\s+/);
-      attemptAFirstName = nameAParts[0] || null;
-      attemptALastName = nameAParts.length > 1 ? nameAParts.slice(1).join(' ') : null;
-    }
-    
-    if (nameB) {
-      // name_b is a full name string, try to split it
-      const nameBParts = nameB.trim().split(/\s+/);
-      attemptBFirstName = nameBParts[0] || null;
-      attemptBLastName = nameBParts.length > 1 ? nameBParts.slice(1).join(' ') : null;
-    }
-    
-    // Fallback to individual fields if name_a/name_b are not available
+    // Fallback to attempt fields only if compare_sessions names are missing (backward compatibility)
     if (!attemptAFirstName) {
-      const aFirst = (rpcData as any).a_user_first_name 
-        ?? (rpcData as any).attempt_a?.user_first_name 
-        ?? (rpcData as any).a_first 
-        ?? null;
-      const aLast  = (rpcData as any).a_user_last_name  
-        ?? (rpcData as any).attempt_a?.user_last_name  
-        ?? (rpcData as any).a_last  
-        ?? null;
-      attemptAFirstName = aFirst;
-      attemptALastName = aLast;
+      attemptAFirstName = rpcData.a_user_first_name || null;
+      attemptALastName = rpcData.a_user_last_name || null;
     }
     
     if (!attemptBFirstName) {
-      const bFirst = (rpcData as any).b_user_first_name 
-        ?? (rpcData as any).attempt_b?.user_first_name 
-        ?? (rpcData as any).b_first 
-        ?? null;
-      const bLast  = (rpcData as any).b_user_last_name  
-        ?? (rpcData as any).attempt_b?.user_last_name  
-        ?? (rpcData as any).b_last  
-        ?? null;
-      attemptBFirstName = bFirst;
-      attemptBLastName = bLast;
+      attemptBFirstName = rpcData.b_user_first_name || null;
+      attemptBLastName = rpcData.b_user_last_name || null;
     }
+    
     let attemptATotalScore: number | null = rpcData.a_total_score;
     let attemptBTotalScore: number | null = rpcData.b_total_score;
     
-    // Fallback to nested structure if flat fields are null/undefined (for backward compatibility)
-    if (!attemptAFirstName && rpcAny.attempt_a && typeof rpcAny.attempt_a === "object") {
-      attemptAFirstName = rpcAny.attempt_a.user_first_name || rpcAny.attempt_a.first_name || null;
-      attemptALastName = rpcAny.attempt_a.user_last_name || rpcAny.attempt_a.last_name || null;
-      attemptATotalScore = rpcAny.attempt_a.total_score || rpcAny.attempt_a.totalScore || attemptATotalScore;
+    // Fallback to nested structure for total_score only (for backward compatibility)
+    if (attemptATotalScore === null && rpcAny.attempt_a && typeof rpcAny.attempt_a === "object") {
+      attemptATotalScore = rpcAny.attempt_a.total_score || rpcAny.attempt_a.totalScore || null;
     }
-    if (!attemptBFirstName && rpcAny.attempt_b && typeof rpcAny.attempt_b === "object") {
-      attemptBFirstName = rpcAny.attempt_b.user_first_name || rpcAny.attempt_b.first_name || null;
-      attemptBLastName = rpcAny.attempt_b.user_last_name || rpcAny.attempt_b.last_name || null;
-      attemptBTotalScore = rpcAny.attempt_b.total_score || rpcAny.attempt_b.totalScore || attemptBTotalScore;
+    if (attemptBTotalScore === null && rpcAny.attempt_b && typeof rpcAny.attempt_b === "object") {
+      attemptBTotalScore = rpcAny.attempt_b.total_score || rpcAny.attempt_b.totalScore || null;
     }
-    
-    // CRITICAL: Fallback fetch from attempts table if RPC didn't return names
-    // Check if names are missing (null, undefined, or empty string)
-    const needsFetchA = !attemptAFirstName || (typeof attemptAFirstName === "string" && attemptAFirstName.trim() === "");
-    const needsFetchB = !attemptBFirstName || (typeof attemptBFirstName === "string" && attemptBFirstName.trim() === "");
-    
-    if (import.meta.env.DEV) {
-      console.log("[CompareResultPage] 🔍 Name fetch check:", {
+        
+        if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 🔍 Names from payload:", {
         token: token ? token.substring(0, 12) + "..." : "N/A",
-        attempt_a_id: rpcData.attempt_a_id,
-        attempt_b_id: rpcData.attempt_b_id,
-        rpc_a_user_first_name: rpcData.a_user_first_name,
-        rpc_b_user_first_name: rpcData.b_user_first_name,
-        current_attemptAFirstName: attemptAFirstName,
-        current_attemptBFirstName: attemptBFirstName,
-        needsFetchA,
-        needsFetchB,
+        inviter_first_name: rpcData.inviter_first_name,
+        inviter_last_name: rpcData.inviter_last_name,
+        invitee_first_name: rpcData.invitee_first_name,
+        invitee_last_name: rpcData.invitee_last_name,
+        attemptAFirstName,
+        attemptALastName,
+        attemptBFirstName,
+        attemptBLastName,
+        source: "compare_sessions table (persisted)",
       });
-    }
-    
-    // Fetch names from attempts table if needed
-    if (needsFetchA && rpcData.attempt_a_id) {
-      try {
-        const { data: attemptA, error: errorA } = await supabase
-          .from("attempts")
-          .select("user_first_name, user_last_name")
-          .eq("id", rpcData.attempt_a_id)
-          .single();
-        
-        if (import.meta.env.DEV) {
-          console.log("[CompareResultPage] 🔍 Fetched Attempt A names:", {
-            attempt_a_id: rpcData.attempt_a_id,
-            fetched: attemptA,
-            error: errorA,
-            user_first_name: attemptA?.user_first_name,
-            user_last_name: attemptA?.user_last_name,
-          });
-        }
-        
-        if (!errorA && attemptA) {
-          attemptAFirstName = attemptA.user_first_name || null;
-          attemptALastName = attemptA.user_last_name || null;
-        } else if (import.meta.env.DEV) {
-          console.warn("[CompareResultPage] ⚠️ Failed to fetch Attempt A names:", errorA);
-        }
-      } catch (err) {
-        if (import.meta.env.DEV) {
-          console.error("[CompareResultPage] ❌ Error fetching Attempt A names:", err);
-        }
-      }
-    }
-    
-    if (needsFetchB && rpcData.attempt_b_id) {
-      try {
-        const { data: attemptB, error: errorB } = await supabase
-          .from("attempts")
-          .select("user_first_name, user_last_name")
-          .eq("id", rpcData.attempt_b_id)
-          .single();
-        
-        if (import.meta.env.DEV) {
-          console.log("[CompareResultPage] 🔍 Fetched Attempt B names:", {
-            attempt_b_id: rpcData.attempt_b_id,
-            fetched: attemptB,
-            error: errorB,
-            user_first_name: attemptB?.user_first_name,
-            user_last_name: attemptB?.user_last_name,
-          });
-        }
-        
-        if (!errorB && attemptB) {
-          attemptBFirstName = attemptB.user_first_name || null;
-          attemptBLastName = attemptB.user_last_name || null;
-        } else if (import.meta.env.DEV) {
-          console.warn("[CompareResultPage] ⚠️ Failed to fetch Attempt B names:", errorB);
-        }
-      } catch (err) {
-        if (import.meta.env.DEV) {
-          console.error("[CompareResultPage] ❌ Error fetching Attempt B names:", err);
-        }
-      }
     }
     
     // Use parsed dimension scores (will handle null/undefined gracefully)
@@ -2478,14 +2378,14 @@ export default function CompareResultPage() {
 
             {/* Central sentence - Dominant Difference (Phase 1 template) */}
             {narratives ? (
-              <div className="space-y-2">
-                <p className="text-center text-base text-foreground/90 leading-relaxed font-medium">
+                <div className="space-y-2">
+                  <p className="text-center text-base text-foreground/90 leading-relaxed font-medium">
                   {narratives.dominantDifference.headline}
-                </p>
-                <p className="text-center text-base text-foreground/90 leading-relaxed font-medium whitespace-pre-line">
+                  </p>
+                  <p className="text-center text-base text-foreground/90 leading-relaxed font-medium whitespace-pre-line">
                   {narratives.dominantDifferenceText}
-                </p>
-              </div>
+                  </p>
+                </div>
             ) : (
               <p className="text-center text-base text-foreground/90 leading-relaxed font-medium">
                 {largestDiff ? (largestDiff.tied 
@@ -2620,9 +2520,9 @@ export default function CompareResultPage() {
                 </ul>
               ) : (
                 <div className="space-y-2">
-                  <p className="text-sm text-foreground/70 italic">
-                    در این نتایج، همسویی کامل کمتر دیده می‌شود؛ این نشانه‌ی تفاوت سبک‌هاست، نه مشکل.
-                  </p>
+                <p className="text-sm text-foreground/70 italic">
+                  در این نتایج، همسویی کامل کمتر دیده می‌شود؛ این نشانه‌ی تفاوت سبک‌هاست، نه مشکل.
+                </p>
                   <p className="text-sm text-foreground/70">
                     شباهت‌ها اینجا بیشتر در «ریتم و سبک پردازش» دیده می‌شوند، نه الزاماً در «سطح شدت».
                   </p>
@@ -2677,15 +2577,15 @@ export default function CompareResultPage() {
         {/* SECTION 6: KEY DIFFERENCES (Phase 3 or Phase 7 template) */}
         {/* For very_different: hide narrative paragraph, only show bullet list above */}
         {narratives && narratives.keyDifferencesText ? (
-          <Card className="bg-primary/10 backdrop-blur-2xl border-primary/20 shadow-xl">
-            <CardContent className="pt-6">
-              <div className="prose prose-invert max-w-none">
-                <p className="text-base text-foreground/90 leading-relaxed whitespace-pre-line text-center">
+            <Card className="bg-primary/10 backdrop-blur-2xl border-primary/20 shadow-xl">
+              <CardContent className="pt-6">
+                <div className="prose prose-invert max-w-none">
+                  <p className="text-base text-foreground/90 leading-relaxed whitespace-pre-line text-center">
                   {narratives.keyDifferencesText}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
         ) : narratives && narratives.keyDifferencesText === "" ? (
           // very_different case - show bridge sentence
           <Card className="bg-primary/10 backdrop-blur-2xl border-primary/20 shadow-xl">
@@ -2737,35 +2637,35 @@ export default function CompareResultPage() {
 
         {/* SECTION 7: MISUNDERSTANDING LOOP (Phase 4 template) */}
         {narratives ? (
-          <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
-            <CardHeader>
+            <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
+              <CardHeader>
               <CardTitle className="text-center text-xl">{narratives.loop.title}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-line">
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-line">
                 {narratives.loopText}
-              </p>
-            </CardContent>
-          </Card>
+                </p>
+              </CardContent>
+            </Card>
         ) : null}
 
         {/* SECTION 8: TRIGGER SITUATIONS (Phase 6 triggers template) */}
         {narratives && narratives.triggers.list.length > 0 ? (
-          <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
-            <CardHeader>
-              <CardTitle className="text-center text-xl">موقعیت‌های فعال‌ساز</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ul className="space-y-2">
+            <Card className="bg-white/10 backdrop-blur-2xl border-white/20 shadow-xl">
+              <CardHeader>
+                <CardTitle className="text-center text-xl">موقعیت‌های فعال‌ساز</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-2">
                 {narratives.triggers.list.map((trigger, index) => (
-                  <li key={index} className="flex items-start gap-2 text-sm text-foreground/80">
-                    <span className="text-primary/80 shrink-0 mt-1">•</span>
-                    <span>{trigger}</span>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
+                    <li key={index} className="flex items-start gap-2 text-sm text-foreground/80">
+                      <span className="text-primary/80 shrink-0 mt-1">•</span>
+                      <span>{trigger}</span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
         ) : null}
 
         {/* SECTION 9: SEEN/UNSEEN CONSEQUENCES */}
@@ -2877,13 +2777,13 @@ export default function CompareResultPage() {
 
         {/* SECTION 12: SAFETY (Phase 6 or Phase 8 template) */}
         {narratives ? (
-          <Card className="bg-blue-500/10 backdrop-blur-2xl border-blue-500/20 shadow-xl">
-            <CardContent className="pt-6">
-              <p className="text-xs text-foreground/80 leading-relaxed text-center whitespace-pre-line">
+            <Card className="bg-blue-500/10 backdrop-blur-2xl border-blue-500/20 shadow-xl">
+              <CardContent className="pt-6">
+                <p className="text-xs text-foreground/80 leading-relaxed text-center whitespace-pre-line">
                 {narratives.safetyText}
-              </p>
-            </CardContent>
-          </Card>
+                </p>
+              </CardContent>
+            </Card>
         ) : (
           <Card className="bg-blue-500/10 backdrop-blur-2xl border-blue-500/20 shadow-xl">
             <CardContent className="pt-6">
