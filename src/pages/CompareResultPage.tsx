@@ -65,33 +65,39 @@ type AttemptData = {
 };
 
 // RPC response type for get_compare_payload_by_token
-// This RPC returns all data needed to render the compare card, bypassing RLS
+// This RPC returns ALL data needed to render the compare card, bypassing RLS
+// IMPORTANT: This is the SINGLE source of truth - no direct table queries needed
 type ComparePayloadRPCResponse = {
   session_id: string;
   quiz_id: string | null;
-  status: string;
+  status: string; // 'pending' | 'completed'
   invite_token: string;
+  expires_at: string | null;
+  // Attempt IDs (also available in attempt_a?.id and attempt_b?.id)
   attempt_a_id: string;
   attempt_b_id: string | null;
-  expires_at: string | null;
-  attempt_a: Record<string, any> | null; // Full attempt A as jsonb
-  attempt_b: Record<string, any> | null; // Full attempt B as jsonb (may be NULL)
+  // Full attempt objects as jsonb (contains .id, .user_first_name, .dimension_scores, etc.)
+  attempt_a: Record<string, any> | null;
+  attempt_b: Record<string, any> | null;
+  // PRIMARY: Flat fields for attempt A (use these first)
   a_total_score: number | null;
-  a_dimension_scores: Record<DimensionKey, number> | null | unknown; // Can be jsonb, string, or null
+  a_dimension_scores: Record<DimensionKey, number> | null | unknown;
   a_score_band_id: number | null;
   a_score_band_title: string | null;
   a_user_first_name: string | null;
   a_user_last_name: string | null;
+  // PRIMARY: Flat fields for attempt B (use these first)
   b_total_score: number | null;
-  b_dimension_scores: Record<DimensionKey, number> | null | unknown; // Can be jsonb, string, or null
+  b_dimension_scores: Record<DimensionKey, number> | null | unknown;
   b_score_band_id: number | null;
   b_score_band_title: string | null;
   b_user_first_name: string | null;
   b_user_last_name: string | null;
-  inviter_first_name: string | null; // From compare_sessions.inviter_first_name (persisted)
-  inviter_last_name: string | null; // From compare_sessions.inviter_last_name (persisted)
-  invitee_first_name: string | null; // From compare_sessions.invitee_first_name (persisted)
-  invitee_last_name: string | null; // From compare_sessions.invitee_last_name (persisted)
+  // Optional: persisted names (may not be returned by all RPC versions)
+  inviter_first_name?: string | null;
+  inviter_last_name?: string | null;
+  invitee_first_name?: string | null;
+  invitee_last_name?: string | null;
 };
 
 type DimensionComparison = {
@@ -848,13 +854,25 @@ export default function CompareResultPage() {
 
   // Process RPC response and set state
   const processCompareData = async (rpcData: ComparePayloadRPCResponse) => {
+    // Compute canonical attempt IDs: prefer attempt_a?.id / attempt_b?.id, fallback to attempt_a_id / attempt_b_id
+    const rpcAnyEntry = rpcData as any;
+    const attemptAId = rpcAnyEntry.attempt_a?.id ?? rpcData.attempt_a_id ?? null;
+    const attemptBId = rpcAnyEntry.attempt_b?.id ?? rpcData.attempt_b_id ?? null;
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:850',message:'processCompareData entry',data:{status:rpcData.status,hasAttemptBId:!!attemptBId,attemptAId:attemptAId?.substring(0,8),attemptBId:attemptBId?.substring(0,8),hasAttemptA:!!rpcAnyEntry.attempt_a,hasAttemptB:!!rpcAnyEntry.attempt_b,attemptAKeys:rpcAnyEntry.attempt_a?Object.keys(rpcAnyEntry.attempt_a):null,attemptBKeys:rpcAnyEntry.attempt_b?Object.keys(rpcAnyEntry.attempt_b):null,aTotalScore:rpcData.a_total_score,bTotalScore:rpcData.b_total_score,aDimScores:rpcData.a_dimension_scores!==null?'present':'null',bDimScores:rpcData.b_dimension_scores!==null?'present':'null'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B'})}).catch(()=>{});
+    // #endregion
+    
     // DEV: Log before building comparison
     if (import.meta.env.DEV) {
       console.log("[CompareResultPage] 🔍 processCompareData entry:", {
         status: rpcData.status,
-        hasAttemptB: !!rpcData.attempt_b_id,
-        attempt_a_id: rpcData.attempt_a_id?.substring(0, 8) + "..." || "null",
-        attempt_b_id: rpcData.attempt_b_id?.substring(0, 8) + "..." || "null",
+        attemptAId: attemptAId?.substring(0, 8) + "..." || "null",
+        attemptBId: attemptBId?.substring(0, 8) + "..." || "null",
+        hasAttemptA: !!rpcAnyEntry.attempt_a,
+        hasAttemptB: !!rpcAnyEntry.attempt_b,
+        attemptAFromPayload: !!rpcAnyEntry.attempt_a?.id,
+        attemptBFromPayload: !!rpcAnyEntry.attempt_b?.id,
         aTotalScore: rpcData.a_total_score,
         bTotalScore: rpcData.b_total_score,
         aDimScores: rpcData.a_dimension_scores !== null ? "present" : "null",
@@ -863,16 +881,20 @@ export default function CompareResultPage() {
         bDimScoresType: typeof rpcData.b_dimension_scores,
       });
     }
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:448',message:'processCompareData entry',data:{status:rpcData.status,hasAttemptB:!!rpcData.attempt_b_id,aTotalScore:rpcData.a_total_score,bTotalScore:rpcData.b_total_score,aDimScores:rpcData.a_dimension_scores!==null?'present':'null',bDimScores:rpcData.b_dimension_scores!==null?'present':'null'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C,D,E'})}).catch(()=>{});
-    // #endregion
 
-    // Set session info
+    // Set session info - use canonical IDs
+    if (!attemptAId) {
+      if (import.meta.env.DEV) {
+        console.error("[CompareResultPage] ❌ Cannot process - missing attemptAId");
+      }
+      setError("اطلاعات آزمون نفر اول یافت نشد.");
+      setLoading(false);
+      return;
+    }
     setSession({
       id: rpcData.session_id,
-      attemptAId: rpcData.attempt_a_id,
-      attemptBId: rpcData.attempt_b_id,
+      attemptAId: attemptAId,
+      attemptBId: attemptBId,
       status: rpcData.status,
       createdAt: new Date().toISOString(),
       expiresAt: rpcData.expires_at || null,
@@ -883,8 +905,8 @@ export default function CompareResultPage() {
         token: token ? token.substring(0, 12) + "..." : "N/A",
         session_status: rpcData.status,
         expires_at: rpcData.expires_at,
-        attempt_a_id: rpcData.attempt_a_id?.substring(0, 8) + "...",
-        attempt_b_id: rpcData.attempt_b_id?.substring(0, 8) + "..." || "null",
+        attemptAId: attemptAId?.substring(0, 8) + "..." || "null",
+        attemptBId: attemptBId?.substring(0, 8) + "..." || "null",
         a_total_score: rpcData.a_total_score,
         b_total_score: rpcData.b_total_score,
         a_dimension_scores_present: rpcData.a_dimension_scores !== null && rpcData.a_dimension_scores !== undefined,
@@ -892,10 +914,20 @@ export default function CompareResultPage() {
       });
     }
 
-    // If pending or attempt_b_id is null, don't process attempts
-    if (rpcData.status !== "completed" || !rpcData.attempt_b_id) {
+    // If pending or attempt_b is missing, don't process attempts
+    // Use canonical attemptBId
+    const hasAttemptB = !!attemptBId;
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:905',message:'Validation check before processing',data:{status:rpcData.status,hasAttemptB:hasAttemptB,willReturnEarly:rpcData.status!=='completed'||!hasAttemptB},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
+    if (rpcData.status !== "completed" || !hasAttemptB) {
       if (import.meta.env.DEV) {
-        console.log("[CompareResultPage] Session not completed, skipping attempt processing");
+        console.log("[CompareResultPage] Session not completed, skipping attempt processing", {
+          status: rpcData.status,
+          hasAttemptB: hasAttemptB,
+          attemptBId: attemptBId,
+          attempt_b_present: !!rpcAnyEntry.attempt_b,
+        });
       }
           return;
         }
@@ -911,17 +943,27 @@ export default function CompareResultPage() {
           return;
     }
 
-    if (rpcData.b_total_score === null || rpcData.b_dimension_scores === null) {
+    // Check if attempt_b has dimension_scores (from attempt_b object or b_dimension_scores field)
+    const rpcAnyCheck = rpcData as any;
+    const hasBDimensionScores = !!(rpcAnyCheck.attempt_b?.dimension_scores || 
+                                   (rpcData.b_dimension_scores !== null && rpcData.b_dimension_scores !== undefined));
+    const hasBTotalScore = rpcData.b_total_score !== null && rpcData.b_total_score !== undefined;
+    
+    if (!hasBTotalScore || !hasBDimensionScores) {
       if (import.meta.env.DEV) {
         console.warn("[CompareResultPage] ⚠️ Attempt B missing total_score or dimension_scores - may still be processing, will poll");
         console.warn("[CompareResultPage] Attempt B data:", {
           b_total_score: rpcData.b_total_score,
           b_dimension_scores: rpcData.b_dimension_scores,
-          b_attempt_id: rpcData.attempt_b_id,
+          attempt_b_dimension_scores: rpcAnyCheck.attempt_b?.dimension_scores,
+          attempt_b_present: !!rpcAnyCheck.attempt_b,
+          hasBDimensionScores: hasBDimensionScores,
+          hasBTotalScore: hasBTotalScore,
+          attemptBId: attemptBId,
         });
       }
       // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:492',message:'Attempt B missing data - starting polling',data:{bTotalScore:rpcData.b_total_score,bDimScores:rpcData.b_dimension_scores!==null?'present':'null',status:rpcData.status},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:492',message:'Attempt B missing data - starting polling',data:{bTotalScore:rpcData.b_total_score,bDimScores:rpcData.b_dimension_scores!==null?'present':'null',attemptBDimScores:rpcAnyCheck.attempt_b?.dimension_scores!==null?'present':'null',status:rpcData.status},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
       // #endregion
       // Attempt B not completed yet - start polling
           setLoading(false);
@@ -943,32 +985,78 @@ export default function CompareResultPage() {
       });
     }
     
-    // Parse dimension scores - use mapped values (handle multiple shapes)
+    // Parse dimension scores - use attempt_a and attempt_b as primary source
     // Declare rpcAny once for the entire function scope
     const rpcAny = rpcData as any;
     
-    let aDimsRaw = rpcData.a_dimension_scores;
-    let bDimsRaw = rpcData.b_dimension_scores;
-    
-    // Check for nested or alternative keys
+    // Priority order: attempt_a.dimension_scores > a_dimension_scores > fallback
+    let aDimsRaw = null;
     if (rpcAny.attempt_a?.dimension_scores) {
       aDimsRaw = rpcAny.attempt_a.dimension_scores;
+      if (import.meta.env.DEV) {
+        console.log("[CompareResultPage] ✅ Using attempt_a.dimension_scores");
+      }
+    } else if (rpcData.a_dimension_scores !== null && rpcData.a_dimension_scores !== undefined) {
+      aDimsRaw = rpcData.a_dimension_scores;
+      if (import.meta.env.DEV) {
+        console.log("[CompareResultPage] ✅ Using a_dimension_scores");
+      }
     } else if (rpcAny.a_dims) {
       aDimsRaw = rpcAny.a_dims;
+      if (import.meta.env.DEV) {
+        console.log("[CompareResultPage] ✅ Using a_dims fallback");
+      }
     }
+    
+    // Priority order: attempt_b.dimension_scores > b_dimension_scores > fallback
+    let bDimsRaw = null;
     if (rpcAny.attempt_b?.dimension_scores) {
       bDimsRaw = rpcAny.attempt_b.dimension_scores;
+      if (import.meta.env.DEV) {
+        console.log("[CompareResultPage] ✅ Using attempt_b.dimension_scores");
+      }
+    } else if (rpcData.b_dimension_scores !== null && rpcData.b_dimension_scores !== undefined) {
+      bDimsRaw = rpcData.b_dimension_scores;
+      if (import.meta.env.DEV) {
+        console.log("[CompareResultPage] ✅ Using b_dimension_scores");
+      }
     } else if (rpcAny.b_dims) {
       bDimsRaw = rpcAny.b_dims;
+      if (import.meta.env.DEV) {
+        console.log("[CompareResultPage] ✅ Using b_dims fallback");
+      }
     }
+    
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 🔍 Dimension scores source check:", {
+        attempt_a_present: !!rpcAny.attempt_a,
+        attempt_b_present: !!rpcAny.attempt_b,
+        attempt_a_dimension_scores: !!rpcAny.attempt_a?.dimension_scores,
+        attempt_b_dimension_scores: !!rpcAny.attempt_b?.dimension_scores,
+        a_dimension_scores_present: rpcData.a_dimension_scores !== null && rpcData.a_dimension_scores !== undefined,
+        b_dimension_scores_present: rpcData.b_dimension_scores !== null && rpcData.b_dimension_scores !== undefined,
+        aDimsRaw_type: typeof aDimsRaw,
+        bDimsRaw_type: typeof bDimsRaw,
+        aDimsRaw_is_null: aDimsRaw === null,
+        bDimsRaw_is_null: bDimsRaw === null,
+      });
+    }
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:974',message:'Before parseDimensionScores',data:{aDimsRawType:typeof aDimsRaw,aDimsRawIsNull:aDimsRaw===null,aDimsRawIsUndefined:aDimsRaw===undefined,bDimsRawType:typeof bDimsRaw,bDimsRawIsNull:bDimsRaw===null,bDimsRawIsUndefined:bDimsRaw===undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,C'})}).catch(()=>{});
+    // #endregion
     
     const aDimsResult = parseDimensionScores(aDimsRaw, "Attempt A");
     const bDimsResult = parseDimensionScores(bDimsRaw, "Attempt B");
     
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:978',message:'After parseDimensionScores',data:{aValidDimsCount:aDimsResult.validDimensions.length,bValidDimsCount:bDimsResult.validDimensions.length,aHasUnknown:aDimsResult.hasUnknown,bHasUnknown:bDimsResult.hasUnknown},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,C'})}).catch(()=>{});
+    // #endregion
+    
       if (import.meta.env.DEV) {
         console.log("[CompareResultPage] ✅ Attempt IDs validated:", {
-          attemptA_id: rpcData.attempt_a_id.substring(0, 8) + "...",
-          attemptB_id: rpcData.attempt_b_id?.substring(0, 8) + "..." || "null",
+          attemptAId: attemptAId?.substring(0, 8) + "..." || "null",
+          attemptBId: attemptBId?.substring(0, 8) + "..." || "null",
           a_user_first_name: rpcData.a_user_first_name,
           a_user_last_name: rpcData.a_user_last_name,
           b_user_first_name: rpcData.b_user_first_name,
@@ -986,33 +1074,54 @@ export default function CompareResultPage() {
         });
       }
 
-    // Build AttemptData objects - use names from attempt_a and attempt_b
-    // Single source of truth: attempt_a and attempt_b from get_compare_payload_by_token
+    // Build AttemptData objects ONLY from RPC fields
+    // Single source of truth: get_compare_payload_by_token RPC
     // NO localStorage, NO cache, NO additional fetch from attempts table
     
-    // Read names from attempt_a and attempt_b (ALWAYS the correct source)
+    // Reference jsonb objects for dimension_scores fallback only
     const attemptA = rpcData.attempt_a;
     const attemptB = rpcData.attempt_b;
     
-    let attemptAFirstName: string | null = null;
-    let attemptALastName: string | null = null;
-    let attemptBFirstName: string | null = null;
-    let attemptBLastName: string | null = null;
-    
-    // attempt_a is ALWAYS the inviter (person A)
-    if (attemptA) {
-      attemptAFirstName = attemptA.first_name || null;
-      attemptALastName = attemptA.last_name || null;
+    // DEV: Log RPC field availability
+    if (import.meta.env.DEV) {
+      console.log("[CompareResultPage] 📋 RPC Field Availability Check:", {
+        // Flat fields (primary source)
+        has_a_user_first_name: rpcData.a_user_first_name !== null && rpcData.a_user_first_name !== undefined,
+        has_a_user_last_name: rpcData.a_user_last_name !== null && rpcData.a_user_last_name !== undefined,
+        has_b_user_first_name: rpcData.b_user_first_name !== null && rpcData.b_user_first_name !== undefined,
+        has_b_user_last_name: rpcData.b_user_last_name !== null && rpcData.b_user_last_name !== undefined,
+        has_a_total_score: rpcData.a_total_score !== null,
+        has_b_total_score: rpcData.b_total_score !== null,
+        has_a_dimension_scores: rpcData.a_dimension_scores !== null,
+        has_b_dimension_scores: rpcData.b_dimension_scores !== null,
+        // JSONB objects (fallback)
+        has_attempt_a_jsonb: !!attemptA,
+        has_attempt_b_jsonb: !!attemptB,
+        attempt_a_keys: attemptA ? Object.keys(attemptA) : null,
+        attempt_b_keys: attemptB ? Object.keys(attemptB) : null,
+      });
     }
     
-    // attempt_b is the invited person (person B)
-    if (attemptB) {
-      attemptBFirstName = attemptB.first_name || null;
-      attemptBLastName = attemptB.last_name || null;
-    }
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:1002',message:'Building attempts from RPC fields',data:{hasAttemptA:!!attemptA,hasAttemptB:!!attemptB,aUserFirstName:rpcData.a_user_first_name,bUserFirstName:rpcData.b_user_first_name,aTotalScore:rpcData.a_total_score,bTotalScore:rpcData.b_total_score},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'RPC-ONLY'})}).catch(()=>{});
+    // #endregion
+    
+    // Names: Use flat RPC fields (a_user_first_name) as primary, fallback to jsonb
+    const attemptAFirstName: string | null = 
+      rpcData.a_user_first_name ?? attemptA?.user_first_name ?? attemptA?.first_name ?? null;
+    const attemptALastName: string | null = 
+      rpcData.a_user_last_name ?? attemptA?.user_last_name ?? attemptA?.last_name ?? null;
+    const attemptBFirstName: string | null = 
+      rpcData.b_user_first_name ?? attemptB?.user_first_name ?? attemptB?.first_name ?? null;
+    const attemptBLastName: string | null = 
+      rpcData.b_user_last_name ?? attemptB?.user_last_name ?? attemptB?.last_name ?? null;
     
     let attemptATotalScore: number | null = rpcData.a_total_score;
     let attemptBTotalScore: number | null = rpcData.b_total_score;
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:1020',message:'Before building AttemptData',data:{hasADimsResult:!!aDimsResult,hasBDimsResult:!!bDimsResult,attemptATotalScore:attemptATotalScore,attemptBTotalScore:attemptBTotalScore},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
     
     // Fallback to nested structure for total_score only (for backward compatibility)
     if (attemptATotalScore === null && rpcAny.attempt_a && typeof rpcAny.attempt_a === "object") {
@@ -1025,8 +1134,8 @@ export default function CompareResultPage() {
         if (import.meta.env.DEV) {
       console.log("[CompareResultPage] 🔍 Names from payload:", {
         token: token ? token.substring(0, 12) + "..." : "N/A",
-        attempt_a_id: rpcData.attempt_a_id,
-        attempt_b_id: rpcData.attempt_b_id,
+        attemptAId: attemptAId,
+        attemptBId: attemptBId,
         attemptAFirstName,
         attemptALastName,
         attemptBFirstName,
@@ -1037,9 +1146,10 @@ export default function CompareResultPage() {
       });
     }
     
-    // CRITICAL: If attempt_b_id is null, Compare Result should not render
+    // CRITICAL: If attempt_b is missing, Compare Result should not render
     // Show "waiting for person B" page instead
-    if (!rpcData.attempt_b_id || rpcData.status !== 'completed') {
+    // Use canonical attemptBId
+    if (!attemptBId || rpcData.status !== 'completed') {
         if (import.meta.env.DEV) {
         console.log("[CompareResultPage] ⚠️ Attempt B not completed yet - should show waiting page");
         }
@@ -1060,46 +1170,48 @@ export default function CompareResultPage() {
       });
     }
     
-    // Build AttemptData objects - use scores from parseDimensionScores result
-    // NOTE: Preserve null/undefined values from RPC - do NOT apply fallback here
+    // Build AttemptData objects ONLY from RPC fields - NO direct DB reads
+    // All fields come from get_compare_payload_by_token RPC response
     const attemptAData: AttemptData = {
-      id: rpcData.attempt_a_id,
-      user_first_name: attemptAFirstName, // From attempt_a.first_name
-      user_last_name: attemptALastName, // From attempt_a.last_name
-      total_score: attemptATotalScore ?? 0, // Fallback to 0 if null
-      dimension_scores: aDimsResult.scores, // Use scores from parse result
-      score_band_id: rpcData.a_score_band_id,
+      id: attemptAId,
+      user_first_name: attemptAFirstName, // From rpcData.a_user_first_name
+      user_last_name: attemptALastName, // From rpcData.a_user_last_name
+      total_score: attemptATotalScore ?? 0, // From rpcData.a_total_score
+      dimension_scores: aDimsResult.scores, // From rpcData.a_dimension_scores (parsed)
+      score_band_id: rpcData.a_score_band_id, // From rpcData.a_score_band_id
       completed_at: new Date().toISOString(),
     };
 
+    // AttemptB built from same RPC response (no additional DB queries)
     const attemptBData: AttemptData = {
-      id: rpcData.attempt_b_id,
-      user_first_name: attemptBFirstName, // From attempt_b.first_name
-      user_last_name: attemptBLastName, // From attempt_b.last_name
-      total_score: attemptBTotalScore ?? 0, // Fallback to 0 if null
-      dimension_scores: bDimsResult.scores, // Use scores from parse result
-      score_band_id: rpcData.b_score_band_id,
+      id: attemptBId,
+      user_first_name: attemptBFirstName, // From rpcData.b_user_first_name
+      user_last_name: attemptBLastName, // From rpcData.b_user_last_name
+      total_score: attemptBTotalScore ?? 0, // From rpcData.b_total_score
+      dimension_scores: bDimsResult.scores, // From rpcData.b_dimension_scores (parsed)
+      score_band_id: rpcData.b_score_band_id, // From rpcData.b_score_band_id
       completed_at: new Date().toISOString(),
     };
     
     if (import.meta.env.DEV) {
-      console.log("[CompareResultPage] 🔍 Built AttemptData objects:", {
+      console.log("[CompareResultPage] ✅ Built AttemptData from RPC (no direct DB reads):", {
         attemptA: {
-          id: attemptAData.id.substring(0, 8) + "...",
+          id: attemptAData.id?.substring(0, 8) + "...",
           user_first_name: attemptAData.user_first_name,
           user_last_name: attemptAData.user_last_name,
           total_score: attemptAData.total_score,
           dimension_scores: attemptAData.dimension_scores,
-          nameSource: rpcData.a_user_first_name ? "RPC" : "fallback",
+          source: "get_compare_payload_by_token RPC",
         },
         attemptB: {
-          id: attemptBData.id.substring(0, 8) + "...",
+          id: attemptBData.id?.substring(0, 8) + "...",
           user_first_name: attemptBData.user_first_name,
           user_last_name: attemptBData.user_last_name,
           total_score: attemptBData.total_score,
           dimension_scores: attemptBData.dimension_scores,
-          nameSource: rpcData.b_user_first_name ? "RPC" : "fallback",
+          source: "get_compare_payload_by_token RPC",
         },
+        dataSource: "RPC only - no direct attempts table queries",
       });
     }
 
@@ -1176,10 +1288,10 @@ export default function CompareResultPage() {
     }
     
         const comparisonResult: Comparison = {
-      id: `compare-${rpcData.attempt_a_id}-${rpcData.attempt_b_id}`,
+      id: `compare-${attemptAId}-${attemptBId}`,
           createdAt: new Date().toISOString(),
-      attemptAId: rpcData.attempt_a_id,
-      attemptBId: rpcData.attempt_b_id,
+      attemptAId: attemptAId,
+      attemptBId: attemptBId,
           summarySimilarity: builtComparison.summarySimilarity,
           dimensions: builtComparison.dimensions,
         };
@@ -1233,13 +1345,22 @@ export default function CompareResultPage() {
       // CRITICAL: If status is 'completed', NEVER show expired/invalid
       // Backend already validated expires_at > now() OR status = 'completed'
       // Frontend should trust backend validation for completed sessions
-      if (rpcData.status === "completed" && rpcData.attempt_b_id) {
+      // Compute canonical attempt IDs
+      const rpcAnyLoad = rpcData as any;
+      const attemptAIdLoad = rpcAnyLoad.attempt_a?.id ?? rpcData.attempt_a_id ?? null;
+      const attemptBIdLoad = rpcAnyLoad.attempt_b?.id ?? rpcData.attempt_b_id ?? null;
+      const hasAttemptBCompleted = !!attemptBIdLoad;
+      if (rpcData.status === "completed" && hasAttemptBCompleted) {
         // Completed sessions are always valid - skip expiry check
         if (import.meta.env.DEV) {
           console.log("[CompareResultPage] ✅ Completed session - skipping expiry check:", {
             token: token ? token.substring(0, 12) + "..." : "N/A",
             status: rpcData.status,
             expires_at: rpcData.expires_at,
+            hasAttemptB: hasAttemptBCompleted,
+            attemptAId: attemptAIdLoad,
+            attemptBId: attemptBIdLoad,
+            attempt_b_present: !!rpcAnyLoad.attempt_b,
           });
         }
         // Continue to process data - do NOT check expiry for completed sessions
@@ -1284,15 +1405,17 @@ export default function CompareResultPage() {
         }
       }
 
-      // Check status - if pending or attempt_b_id is null, show pending UI
-      if (rpcData.status === "pending" || !rpcData.attempt_b_id) {
+      // Check status - if pending or attempt_b is missing, show pending UI
+      // Use canonical attempt IDs
+      const hasAttemptBPending = !!attemptBIdLoad;
+      if (rpcData.status === "pending" || !hasAttemptBPending) {
           if (import.meta.env.DEV) {
           console.log("[CompareResultPage] ⏳ Session is pending, starting polling");
         }
         setSession({
           id: rpcData.session_id,
-          attemptAId: rpcData.attempt_a_id,
-          attemptBId: rpcData.attempt_b_id,
+          attemptAId: attemptAIdLoad,
+          attemptBId: attemptBIdLoad,
           status: rpcData.status,
           createdAt: new Date().toISOString(),
           expiresAt: rpcData.expires_at || null,
@@ -1304,14 +1427,17 @@ export default function CompareResultPage() {
 
       // Process completed session
       // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:764',message:'About to process compare data',data:{status:rpcData.status,hasAttemptB:!!rpcData.attempt_b_id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:764',message:'About to process compare data',data:{status:rpcData.status,hasAttemptB:!!attemptBIdLoad},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
       // #endregion
       try {
       await processCompareData(rpcData);
         // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:768',message:'processCompareData completed successfully',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:1310',message:'processCompareData completed successfully',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
         // #endregion
         } catch (processError) {
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:1314',message:'processCompareData threw error',data:{errorMessage:processError instanceof Error?processError.message:'unknown',errorName:processError instanceof Error?processError.name:'unknown',errorStack:processError instanceof Error?processError.stack:null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
         // DEV: Log process error
         if (import.meta.env.DEV) {
           const errorDetails = processError instanceof Error ? {
@@ -1379,8 +1505,17 @@ export default function CompareResultPage() {
 
       try {
         const rpcData = await loadComparePayload();
-        if (rpcData && rpcData.status === "completed" && rpcData.attempt_b_id && 
-            rpcData.b_total_score !== null && rpcData.b_dimension_scores !== null) {
+        // Check if completed using canonical attempt IDs
+        const rpcAnyPoll = rpcData as any;
+        const attemptBIdPoll = rpcAnyPoll?.attempt_b?.id ?? rpcData?.attempt_b_id ?? null;
+        const hasAttemptB = !!attemptBIdPoll;
+        // Check dimension_scores from both attempt_b object and b_dimension_scores field
+        const hasBDimensionScores = !!(rpcAnyPoll?.attempt_b?.dimension_scores || 
+                                       (rpcData?.b_dimension_scores !== null && rpcData?.b_dimension_scores !== undefined));
+        const hasBTotalScore = rpcData?.b_total_score !== null && rpcData?.b_total_score !== undefined;
+        
+        if (rpcData && rpcData.status === "completed" && hasAttemptB && 
+            hasBTotalScore && hasBDimensionScores) {
           stopPolling();
           await processCompareData(rpcData);
           setLoading(false);
@@ -1500,11 +1635,16 @@ export default function CompareResultPage() {
   }
 
   // Waiting state (pending) - friendly loading with auto-retry
-  if (session && (session.status !== "completed" || !session.attemptBId)) {
+  // Check hasAttemptBId from payload.attempt_b?.id, not just session.attemptBId
+  // Also check if we have attemptB in state (from processCompareData)
+  const hasAttemptBId = !!(session?.attemptBId || attemptB?.id);
+  if (session && (session.status !== "completed" || !hasAttemptBId)) {
     // #region agent log - Safety: Log state branch
     console.log("[CompareResultPage] 📊 State branch: PENDING", {
       sessionStatus: session.status,
-      hasAttemptBId: !!session.attemptBId,
+      hasAttemptBId: hasAttemptBId,
+      sessionAttemptBId: session.attemptBId,
+      attemptBId: attemptB?.id,
       pollingCount,
     });
     // #endregion
