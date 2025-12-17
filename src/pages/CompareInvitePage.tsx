@@ -87,17 +87,55 @@ export default function CompareInvitePage() {
 
         const tokenRow = Array.isArray(data) ? data[0] : data;
 
-        // Check expiry
-        const now = new Date();
-        const expiresAt = tokenRow.expires_at ? new Date(tokenRow.expires_at) : null;
-        const isExpired = expiresAt !== null && expiresAt <= now;
+        // Check expiry using getTime() for accurate comparison
+        // Handle parse failures gracefully (show "خطا در بارگذاری" not "منقضی")
+        let isExpired = false;
+        let expiresAtMs: number | null = null;
+        const nowMs = Date.now();
+        
+        if (tokenRow.expires_at) {
+          const parsedExpiresAt = Date.parse(tokenRow.expires_at);
+          if (isNaN(parsedExpiresAt)) {
+            // Parse failure - log and show error, don't treat as expired
+            if (import.meta.env.DEV) {
+              console.error("[CompareInvitePage] ❌ Failed to parse expires_at:", {
+                token: trimmedToken,
+                raw_expires_at: tokenRow.expires_at,
+                parsedExpiresAt,
+                status: tokenRow.status,
+                RPC_error: null,
+              });
+            }
+            setError("خطا در بارگذاری");
+            setLoading(false);
+            return;
+          }
+          expiresAtMs = parsedExpiresAt;
+          isExpired = expiresAtMs <= nowMs;
+        }
+
+        if (import.meta.env.DEV) {
+          console.log("[CompareInvitePage] 🔍 Token validation:", {
+            token: trimmedToken.substring(0, 12) + "...",
+            raw_expires_at: tokenRow.expires_at,
+            parsedExpiresAtMs: expiresAtMs,
+            nowMs,
+            status: tokenRow.status,
+            computedExpired: isExpired,
+            RPC_error: null,
+          });
+        }
 
         if (isExpired) {
-          console.log("[CompareInvitePage] Token expired:", {
-            token: trimmedToken,
-            expires_at: tokenRow.expires_at,
-            now: now.toISOString(),
-          });
+          if (import.meta.env.DEV) {
+            console.log("[CompareInvitePage] Token expired:", {
+              token: trimmedToken,
+              expires_at: tokenRow.expires_at,
+              expiresAtMs,
+              nowMs,
+              now: new Date(nowMs).toISOString(),
+            });
+          }
           setError("لینک منقضی شده است");
           setLoading(false);
           return;

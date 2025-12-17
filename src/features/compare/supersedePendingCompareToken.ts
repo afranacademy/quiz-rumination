@@ -65,7 +65,7 @@ export async function supersedePendingCompareToken(
     throw new Error(`Failed to supersede and create compare token: ${rpcError.message}`);
   }
 
-  // RPC returns a row with session_id, invite_token, expires_at
+  // RPC returns a row with token, expires_at, compare_id (from compare_tokens table)
   let resultRow: any = null;
   if (Array.isArray(rpcData)) {
     if (rpcData.length === 0) {
@@ -84,15 +84,15 @@ export async function supersedePendingCompareToken(
     throw new Error("Invalid response from supersede_pending_compare_token RPC: unexpected format");
   }
 
-  if (!resultRow.invite_token || typeof resultRow.invite_token !== "string") {
+  if (!resultRow.token || typeof resultRow.token !== "string") {
     if (import.meta.env.DEV) {
-      console.error("[supersedePendingCompareToken] ❌ Invalid RPC response - missing invite_token:", resultRow);
+      console.error("[supersedePendingCompareToken] ❌ Invalid RPC response - missing token:", resultRow);
     }
-    throw new Error("Invalid response from supersede_pending_compare_token RPC: missing invite_token");
+    throw new Error("Invalid response from supersede_pending_compare_token RPC: missing token");
   }
 
-  const inviteToken = resultRow.invite_token;
-  const sessionId = resultRow.session_id || "";
+  const inviteToken = resultRow.token;
+  const sessionId = resultRow.compare_id || resultRow.token; // Use compare_id or token as session_id
   const expiresAt = resultRow.expires_at || "";
 
   // Build share URL

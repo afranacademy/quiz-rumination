@@ -412,9 +412,8 @@ export default function QuizPage() {
 
     if (import.meta.env.DEV && requestId) {
       console.log(`[QuizPage] [${requestId}] 🔍 Live token check (top-level):`, {
-        fromUrl: !!liveTokenFromUrl,
-        fromStorage: !!liveTokenFromStorage,
         token: liveCompareToken ? liveCompareToken.substring(0, 12) + "..." : null,
+        tokenLength: liveCompareToken ? liveCompareToken.length : 0,
       });
     }
 
@@ -552,17 +551,33 @@ export default function QuizPage() {
         
         if (import.meta.env.DEV && requestId) {
           console.log(`[QuizPage] [${requestId}] 🎯 Invite token detected - completing compare session:`, {
-            token: trimmedToken,
+            token: trimmedToken.substring(0, 12) + "...",
+            raw_token: liveCompareToken,
+            trimmed_token: trimmedToken,
             tokenLength: trimmedToken.length,
-            attemptBId: currentAttemptId,
+            attemptBId: currentAttemptId.substring(0, 8) + "...",
             attemptBIdLength: currentAttemptId.length,
             rpcPayload,
+            now: new Date().toISOString(),
+            nowMs: Date.now(),
           });
         }
         
         try {
-          // Call RPC directly using supabase client
+          // Call RPC directly using supabase client (uses compare_tokens table via migration 015)
           const { data: rpcData, error: rpcError } = await supabase.rpc("complete_compare_session", rpcPayload);
+          
+          if (import.meta.env.DEV && requestId) {
+            console.log(`[QuizPage] [${requestId}] 🔍 RPC complete_compare_session response:`, {
+              hasError: !!rpcError,
+              errorCode: rpcError?.code,
+              errorMessage: rpcError?.message,
+              hasData: !!rpcData,
+              dataType: Array.isArray(rpcData) ? "array" : typeof rpcData,
+              dataLength: Array.isArray(rpcData) ? rpcData.length : null,
+              token: trimmedToken.substring(0, 12) + "...",
+            });
+          }
           
           if (rpcError) {
             // RPC FAILED - DO NOT navigate, DO NOT fall back
@@ -611,12 +626,14 @@ export default function QuizPage() {
           }
           
           // RPC SUCCEEDED
-          // rpcData is the compare_id (session id) returned from the RPC
-          const compareId = rpcData;
+          // rpcData is now a TABLE (array) with one row containing: compare_id, token, status, attempt_a_id, attempt_b_id, expires_at
+          const resultRow = Array.isArray(rpcData) && rpcData.length > 0 ? rpcData[0] : null;
+          const compareId = resultRow?.compare_id || resultRow?.token || trimmedToken;
           
           if (import.meta.env.DEV && requestId) {
             console.log(`[QuizPage] [${requestId}] ✅ Compare session completed successfully:`, {
               compareId: compareId,
+              resultRow: resultRow,
               inviteToken: trimmedToken,
               attemptBId: currentAttemptId,
             });
@@ -631,7 +648,7 @@ export default function QuizPage() {
             console.log(`[QuizPage] [${requestId}] 📊 Step 1 - Final IDs:`, {
               compareToken: liveCompareToken.substring(0, 12) + "...",
               attemptBId: currentAttemptId.substring(0, 8) + "...",
-              sessionId: rpcData || "unknown",
+              compareId: compareId,
               navigationUrl: targetUrl,
             });
           }

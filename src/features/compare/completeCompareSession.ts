@@ -21,63 +21,48 @@ export async function completeCompareSession(
     });
   }
 
-  // Try RPC first
-  const { data: rpcData, error: rpcError } = await supabase.rpc("complete_compare_session", rpcPayload);
+  // Trim token before RPC call
+  const trimmedToken = token.trim();
+  const trimmedRpcPayload = {
+    p_token: trimmedToken,
+    p_attempt_b_id: attemptBId,
+  };
 
-  if (!rpcError) {
-    if (import.meta.env.DEV) {
-      console.log("[completeCompareSession] ✅ Session completed via RPC:", {
-        rpcPayload,
-        rpcResponse: rpcData,
-      });
-    }
-    return;
+  if (import.meta.env.DEV) {
+    console.log("[completeCompareSession] 🔍 Completing session:", {
+      token: trimmedToken.substring(0, 12) + "...",
+      raw_token: token,
+      trimmed_token: trimmedToken,
+      attemptBId: attemptBId.substring(0, 8) + "...",
+      rpcPayload: trimmedRpcPayload,
+    });
   }
 
-  // If RPC doesn't exist or fails, use direct update
-  if (rpcError.code === "42883" || rpcError.message?.includes("function") || rpcError.message?.includes("does not exist")) {
+  // Call RPC (must use compare_tokens table via migration 015)
+  const { data: rpcData, error: rpcError } = await supabase.rpc("complete_compare_session", trimmedRpcPayload);
+
+  if (rpcError) {
     if (import.meta.env.DEV) {
-      console.log("[completeCompareSession] RPC not found, using direct update");
-    }
-  } else {
-    if (import.meta.env.DEV) {
-      console.error("[completeCompareSession] RPC Error:", {
-        rpcPayload,
+      console.error("[completeCompareSession] ❌ RPC Error:", {
+        rpcPayload: trimmedRpcPayload,
         code: rpcError.code,
         message: rpcError.message,
         details: rpcError.details,
         hint: rpcError.hint,
         status: rpcError.status || "N/A",
+        token: trimmedToken.substring(0, 12) + "...",
       });
       console.error("[completeCompareSession] Full RPC error object:", rpcError);
     }
     throw new Error(`Failed to complete compare session: ${rpcError.message}`);
   }
 
-  // Direct update
-  const { error: updateError } = await supabase
-    .from("compare_sessions")
-    .update({
-      attempt_b_id: attemptBId,
-      status: "completed",
-    })
-    .eq("invite_token", token)
-    .eq("status", "pending");
-
-  if (updateError) {
-    if (import.meta.env.DEV) {
-      console.error("[completeCompareSession] Update Error:", {
-        code: updateError.code,
-        message: updateError.message,
-        details: updateError.details,
-        hint: updateError.hint,
-      });
-    }
-    throw new Error(`Failed to complete compare session: ${updateError.message}`);
-  }
-
   if (import.meta.env.DEV) {
-    console.log("[completeCompareSession] ✅ Session completed via direct update");
+    console.log("[completeCompareSession] ✅ Session completed via RPC:", {
+      rpcPayload: trimmedRpcPayload,
+      rpcResponse: rpcData,
+      token: trimmedToken.substring(0, 12) + "...",
+    });
   }
 }
 

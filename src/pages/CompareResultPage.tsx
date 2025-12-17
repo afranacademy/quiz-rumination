@@ -19,6 +19,7 @@ import { useAnonAuth } from "@/hooks/useAnonAuth";
 import { trackShareEvent } from "@/lib/trackShareEvent";
 import { AppModal } from "@/components/AppModal";
 import { createCompareInvite } from "@/features/compare/createCompareInvite";
+import { supersedePendingCompareToken } from "@/features/compare/supersedePendingCompareToken";
 import { getLatestCompletedAttempt } from "@/features/compare/getLatestCompletedAttempt";
 import { LINKS } from "@/config/links";
 import {
@@ -74,11 +75,14 @@ type AttemptData = {
 // This RPC returns all data needed to render the compare card, bypassing RLS
 type ComparePayloadRPCResponse = {
   session_id: string;
+  quiz_id: string | null;
   status: string;
   invite_token: string;
   attempt_a_id: string;
   attempt_b_id: string | null;
   expires_at: string | null;
+  attempt_a: Record<string, any> | null; // Full attempt A as jsonb
+  attempt_b: Record<string, any> | null; // Full attempt B as jsonb (may be NULL)
   a_total_score: number | null;
   a_dimension_scores: Record<DimensionKey, number> | null | unknown; // Can be jsonb, string, or null
   a_score_band_id: number | null;
@@ -446,13 +450,18 @@ export default function CompareResultPage() {
   console.log("[CompareResultPage] 🟢 Render start");
   // #endregion
   
-  const { token } = useParams<{ token: string }>();
+  const { token: tokenParam } = useParams<{ token: string }>();
+  // Trim token from URL params immediately
+  const token = tokenParam ? tokenParam.trim() : null;
   
   // #region agent log - Safety: Log token parse
-  console.log("[CompareResultPage] 🔍 Token parsed:", {
-    token: token ? token.substring(0, 12) + "..." : null,
-    hasToken: !!token,
-  });
+  if (import.meta.env.DEV) {
+    console.log("[CompareResultPage] 🔍 Token parsed:", {
+      raw_token: tokenParam,
+      trimmed_token: token,
+      hasToken: !!token,
+    });
+  }
   // #endregion
   
   const navigate = useNavigate();
@@ -504,18 +513,20 @@ export default function CompareResultPage() {
     if (!token) return null;
 
       try {
+        // Token is already trimmed from useParams, but ensure it's trimmed
+        const trimmedToken = token.trim();
+        
         if (import.meta.env.DEV) {
         console.log("[CompareResultPage] 🔵 Calling RPC get_compare_payload_by_token");
-        console.log("[CompareResultPage] RPC Payload:", { p_token: token.substring(0, 12) + "..." });
+        console.log("[CompareResultPage] RPC Payload:", { 
+          p_token: trimmedToken.substring(0, 12) + "...",
+          tokenLength: trimmedToken.length,
+        });
         }
-
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:376',message:'RPC call start',data:{token:token?.substring(0,12)+'...'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C'})}).catch(()=>{});
-      // #endregion
 
       const { data: rpcData, error: rpcError } = await supabase.rpc(
         "get_compare_payload_by_token",
-          { p_token: token }
+          { p_token: trimmedToken }
         );
 
       // DEV: Store RPC data for diagnostics
@@ -1201,62 +1212,10 @@ export default function CompareResultPage() {
           console.log("[CompareResultPage] ⚠️ RPC returned null - attempting fallback fetch");
         }
         
-        try {
-          // Fallback: Fetch session directly
-          const { data: sessionData, error: sessionError } = await supabase
-            .from("compare_sessions")
-            .select("id, status, attempt_a_id, attempt_b_id, expires_at")
-            .eq("invite_token", token)
-            .maybeSingle();
-          
-          if (sessionData && sessionData.status === "completed" && sessionData.attempt_b_id) {
-            if (import.meta.env.DEV) {
-              console.log("[CompareResultPage] ✅ Fallback: Found completed session, fetching attempts");
-            }
-            
-            // Fetch attempts A and B
-            const { data: attemptsData, error: attemptsError } = await supabase
-              .from("attempts")
-              .select("id, total_score, dimension_scores, user_first_name, user_last_name, score_band_id")
-              .in("id", [sessionData.attempt_a_id, sessionData.attempt_b_id]);
-            
-            if (attemptsData && attemptsData.length === 2) {
-              const attemptA = attemptsData.find(a => a.id === sessionData.attempt_a_id);
-              const attemptB = attemptsData.find(a => a.id === sessionData.attempt_b_id);
-              
-              if (attemptA && attemptB) {
-                // Build payload manually
-                rpcData = {
-                  session_id: sessionData.id,
-                  status: sessionData.status,
-                  invite_token: token,
-                  attempt_a_id: sessionData.attempt_a_id,
-                  attempt_b_id: sessionData.attempt_b_id,
-                  expires_at: sessionData.expires_at,
-                  a_total_score: attemptA.total_score,
-                  a_dimension_scores: attemptA.dimension_scores as any,
-                  a_score_band_id: attemptA.score_band_id,
-                  a_score_band_title: null,
-                  a_user_first_name: attemptA.user_first_name,
-                  a_user_last_name: attemptA.user_last_name,
-                  b_total_score: attemptB.total_score,
-                  b_dimension_scores: attemptB.dimension_scores as any,
-                  b_score_band_id: attemptB.score_band_id,
-                  b_score_band_title: null,
-                  b_user_first_name: attemptB.user_first_name,
-                  b_user_last_name: attemptB.user_last_name,
-                };
-                
-                if (import.meta.env.DEV) {
-                  console.log("[CompareResultPage] ✅ Fallback: Built payload from direct queries");
-                }
-              }
-            }
-          }
-        } catch (fallbackError) {
-          if (import.meta.env.DEV) {
-            console.error("[CompareResultPage] ❌ Fallback fetch failed:", fallbackError);
-          }
+        // NO FALLBACK: Must use RPC get_compare_payload_by_token which reads from compare_tokens
+        // Do NOT use compare_sessions table directly
+        if (import.meta.env.DEV) {
+          console.warn("[CompareResultPage] ⚠️ RPC returned null - no fallback to compare_sessions (using compare_tokens only)");
         }
       }
 
@@ -1270,32 +1229,59 @@ export default function CompareResultPage() {
         return;
       }
 
-      // Check if session is expired (expires_at exists and is in the past)
-      // STATE C: If expired but data exists, still show comparison with soft note
-      if (rpcData.expires_at) {
-        const expiresAt = new Date(rpcData.expires_at);
-        const now = new Date();
-        if (expiresAt <= now) {
+      // CRITICAL: If status is 'completed', NEVER show expired/invalid
+      // Backend already validated expires_at > now() OR status = 'completed'
+      // Frontend should trust backend validation for completed sessions
+      if (rpcData.status === "completed" && rpcData.attempt_b_id) {
+        // Completed sessions are always valid - skip expiry check
+        if (import.meta.env.DEV) {
+          console.log("[CompareResultPage] ✅ Completed session - skipping expiry check:", {
+            token: token ? token.substring(0, 12) + "..." : "N/A",
+            status: rpcData.status,
+            expires_at: rpcData.expires_at,
+          });
+        }
+        // Continue to process data - do NOT check expiry for completed sessions
+      } else if (rpcData.expires_at) {
+        // Only check expiry for pending sessions
+        const parsedExpiresAt = Date.parse(rpcData.expires_at);
+        const nowMs = Date.now();
+        
+        if (isNaN(parsedExpiresAt)) {
+          // Parse failure - log and show error, don't treat as expired
           if (import.meta.env.DEV) {
-            console.log("[CompareResultPage] ⚠️ Session expired but data exists:", {
-              expires_at: rpcData.expires_at,
-              now: now.toISOString(),
+            console.error("[CompareResultPage] ❌ Failed to parse expires_at:", {
+              token: token ? token.substring(0, 12) + "..." : "N/A",
+              raw_expires_at: rpcData.expires_at,
+              parsedExpiresAt,
               status: rpcData.status,
-              attempt_b_id: rpcData.attempt_b_id,
             });
           }
-          // If completed, still show comparison with expired note
-          if (rpcData.status === "completed" && rpcData.attempt_b_id) {
-            setIsExpired(true);
-            // Continue to process data
-          } else {
-            // If not completed, treat as invalid
-            setError("این لینک معتبر نیست یا منقضی شده است.");
+          setError("خطا در بارگذاری");
           setLoading(false);
           return;
-          }
         }
+        
+        const isExpired = parsedExpiresAt <= nowMs;
+        
+        if (import.meta.env.DEV) {
+          console.log("[CompareResultPage] 🔍 Token validation (pending):", {
+            token: token ? token.substring(0, 12) + "..." : "N/A",
+            raw_expires_at: rpcData.expires_at,
+            parsedExpiresAtMs: parsedExpiresAt,
+            nowMs,
+            status: rpcData.status,
+            computedExpired: isExpired,
+          });
         }
+        
+        if (isExpired) {
+          // Pending session is expired
+          setError("این لینک معتبر نیست یا منقضی شده است.");
+          setLoading(false);
+          return;
+        }
+      }
 
       // Check status - if pending or attempt_b_id is null, show pending UI
       if (rpcData.status === "pending" || !rpcData.attempt_b_id) {
@@ -1471,14 +1457,24 @@ export default function CompareResultPage() {
       
       setIsCreatingInvite(true);
       try {
-        const result = await createCompareInvite(attemptA.id, 10080);
-        const newUrl = `${window.location.origin}/compare/result/${result.invite_token}`;
-        // Navigate to new link
+        // Use supersede to invalidate old tokens and create new one (7 days = 10080 minutes)
+        const result = await supersedePendingCompareToken(attemptA.id, 10080);
+        const newUrl = `${window.location.origin}/compare/invite/${result.invite_token}`;
+        
+        if (import.meta.env.DEV) {
+          console.log("[CompareResultPage] ✅ New invite link created via supersede:", {
+            token: result.invite_token.substring(0, 12) + "...",
+            url: newUrl,
+            expiresAt: result.expires_at,
+          });
+        }
+        
+        // Navigate to new invite link
         navigate(newUrl);
         toast.success("لینک جدید ساخته شد");
       } catch (err) {
         if (import.meta.env.DEV) {
-          console.error("[CompareResultPage] Error creating new invite:", err);
+          console.error("[CompareResultPage] ❌ Error creating new invite via supersede:", err);
         }
         toast.error("خطا در ساخت لینک جدید");
       } finally {
@@ -1656,7 +1652,17 @@ export default function CompareResultPage() {
       
       setIsCreatingInvite(true);
       try {
-        const result = await createCompareInvite(attemptAId, 10080);
+        // Use supersede to invalidate old tokens and create new one (7 days = 10080 minutes)
+        const result = await supersedePendingCompareToken(attemptAId, 10080);
+        
+        if (import.meta.env.DEV) {
+          console.log("[CompareResultPage] ✅ New invite link created via supersede:", {
+            token: result.invite_token.substring(0, 12) + "...",
+            url: `${window.location.origin}/compare/invite/${result.invite_token}`,
+            expiresAt: result.expires_at,
+          });
+        }
+        
         setInviteData({
           token: result.invite_token,
           url: `${window.location.origin}/compare/invite/${result.invite_token}`,
@@ -1665,7 +1671,7 @@ export default function CompareResultPage() {
         setInviteModalOpen(true);
       } catch (err) {
         if (import.meta.env.DEV) {
-          console.error("[CompareResultPage] Error creating invite:", err);
+          console.error("[CompareResultPage] ❌ Error creating invite via supersede:", err);
         }
         toast.error("خطا در ساخت لینک دعوت");
       } finally {
