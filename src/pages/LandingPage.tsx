@@ -23,7 +23,7 @@ export default function LandingPage() {
     mobile?: string;
   }>({});
   const [isStarting, setIsStarting] = useState(false);
-  const [lastError, setLastError] = useState<string | null>(null);
+  const [_lastError, setLastError] = useState<string | null>(null);
 
   const handleFieldChange = (field: "firstName" | "lastName" | "mobile", value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));

@@ -1,13 +1,11 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/app/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/card";
-import { RefreshCw, Link as LinkIcon, Share2, BookOpen, Download, FileText } from "lucide-react";
+import { RefreshCw, Link as LinkIcon, Share2, BookOpen, Download, FileText, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { copyText } from "@/features/share/shareClient";
-import { shareInvite, copyInvite } from "@/utils/inviteCta";
-import { TEST_LINK } from "@/constants/links";
 import {
   generatePdfBlob,
   downloadPdf,
@@ -20,24 +18,17 @@ import { computeSimilarity } from "@/features/compare/computeSimilarity";
 import { useAnonAuth } from "@/hooks/useAnonAuth";
 import { trackShareEvent } from "@/lib/trackShareEvent";
 import { AppModal } from "@/components/AppModal";
-import { createCompareInvite } from "@/features/compare/createCompareInvite";
 import { supersedePendingCompareToken } from "@/features/compare/supersedePendingCompareToken";
 import { getLatestCompletedAttempt } from "@/features/compare/getLatestCompletedAttempt";
-import { LINKS } from "@/config/links";
 import { COURSE_LINK } from "@/constants/links";
 import {
   DIMENSION_DEFINITIONS,
   getAlignmentLabel,
   getLargestDifferenceDimension,
   getLargestSimilarityDimension,
-  getContextualTriggers,
-  getCombinedContextualTriggers,
   getSeenUnseenConsequences,
-  CONVERSATION_STARTERS,
   SAFETY_STATEMENT,
   getDimensionNameForSnapshot,
-  shouldShowCTA,
-  generateSafeShareText,
   getMisunderstandingRisk,
   getConversationStarters,
 } from "@/features/compare/relationalContent";
@@ -101,14 +92,6 @@ type ComparePayloadRPCResponse = {
   inviter_last_name: string | null; // From compare_sessions.inviter_last_name (persisted)
   invitee_first_name: string | null; // From compare_sessions.invitee_first_name (persisted)
   invitee_last_name: string | null; // From compare_sessions.invitee_last_name (persisted)
-};
-
-type ScoreBand = {
-  id: number;
-  slug: string;
-  title: string;
-  min_score: number;
-  max_score: number;
 };
 
 type DimensionComparison = {
@@ -256,11 +239,12 @@ function parseDimensionScores(
 
 /**
  * Builds a comparison from dimension scores of two attempts.
+ * Returns partial Comparison (without id, createdAt, attemptAId, attemptBId).
  */
 function buildComparison(
   attemptA: AttemptData,
   attemptB: AttemptData
-): Comparison {
+): Pick<Comparison, 'summarySimilarity' | 'dimensions'> {
   // Threshold constants for relation calculation
   const SIMILAR_THRESHOLD = 0.8;
   const DIFFERENT_THRESHOLD = 1.6;
@@ -393,19 +377,6 @@ function buildComparison(
 }
 
 /**
- * Gets delta label (بیشتر/کمتر/نزدیک)
- */
-function getDeltaLabel(delta: number, aScore: number, bScore: number): string {
-  if (delta < 0.8) {
-    return "نزدیک";
-  }
-  if (bScore > aScore) {
-    return "بیشتر";
-  }
-  return "کمتر";
-}
-
-/**
  * Formats expires_at date for Persian display
  */
 function formatExpiresAt(expiresAt: string | null): string {
@@ -435,27 +406,6 @@ function formatExpiresAt(expiresAt: string | null): string {
   }
 }
 
-/**
- * Masks phone number for display (safety guardrail)
- * Shows only first 3 and last 2 digits: +98***1234
- * 
- * INTENTIONALLY UNUSED: Phone numbers are never displayed in Compare Minds outputs
- * (UI, PDF, or share text). This function is kept as defensive coding for potential
- * future features that might need phone display. If phone display is added, use this
- * function to mask phone numbers before rendering.
- */
-function maskPhone(phone: string | null | undefined): string {
-  if (!phone || typeof phone !== "string") return "";
-  // Remove any non-digit characters except +
-  const cleaned = phone.replace(/[^\d+]/g, "");
-  if (cleaned.length < 6) return cleaned; // Too short to mask
-  // Show first 3 chars and last 2 chars
-  const prefix = cleaned.substring(0, 3);
-  const suffix = cleaned.substring(cleaned.length - 2);
-  const masked = "*".repeat(Math.max(0, cleaned.length - 5));
-  return `${prefix}${masked}${suffix}`;
-}
-
 export default function CompareResultPage() {
   // #region agent log - Safety: Log render start
   console.log("[CompareResultPage] 🟢 Render start");
@@ -482,11 +432,8 @@ export default function CompareResultPage() {
   const [session, setSession] = useState<CompareSession | null>(null);
   const [attemptA, setAttemptA] = useState<AttemptData | null>(null);
   const [attemptB, setAttemptB] = useState<AttemptData | null>(null);
-  const [bandA, setBandA] = useState<ScoreBand | null>(null);
-  const [bandB, setBandB] = useState<ScoreBand | null>(null);
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [pollingCount, setPollingCount] = useState(0);
-  const [isExpired, setIsExpired] = useState(false);
   const [isCreatingInvite, setIsCreatingInvite] = useState(false);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const [inviteData, setInviteData] = useState<{
@@ -494,7 +441,7 @@ export default function CompareResultPage() {
     url: string;
     expiresAt: string;
   } | null>(null);
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const compareContentRef = useRef<HTMLDivElement>(null);
   // Refs to store function references for use in useEffect hooks (which must be before early returns)
   const loadCompareResultRef = useRef<(() => Promise<void>) | null>(null);
@@ -530,9 +477,6 @@ export default function CompareResultPage() {
     });
   }, [comparison, attemptA, attemptB]);
   
-  // DEV: Track RPC data for diagnostics
-  const [devRpcData, setDevRpcData] = useState<any>(null);
-  const [devLastError, setDevLastError] = useState<any>(null);
   
   // CRITICAL: Use canonical DIMENSIONS constant
   const dimensionKeys = DIMENSIONS;
@@ -650,7 +594,13 @@ export default function CompareResultPage() {
       dominantDifferenceText: narratives.dominantDifferenceText,
       perPersonA: generatePerPersonProfile(nameA, attemptA.dimension_scores),
       perPersonB: generatePerPersonProfile(nameB, attemptB.dimension_scores),
-      mentalMap: narratives.mentalMap,
+      mentalMap: narratives.mentalMap.map(item => ({
+        dimension: item.dimension,
+        relationLabel: item.relation === "similar" ? "همسو" : item.relation === "different" ? "متفاوت" : "خیلی متفاوت",
+        aLevel: item.aLevel || "کم",
+        bLevel: item.bLevel || "کم",
+        text: item.text,
+      })),
       keyDifferencesText: narratives.keyDifferencesText,
       similaritiesList: insights.similarDims,
       differencesList: [...insights.veryDifferentDims, ...insights.differentDims],
@@ -709,7 +659,6 @@ export default function CompareResultPage() {
 
       // DEV: Store RPC data for diagnostics
       if (import.meta.env.DEV) {
-        setDevRpcData(rpcData);
         // CRITICAL: Log Object.keys for RPC mapping verification
         const rpcKeys = rpcData && typeof rpcData === "object" && !Array.isArray(rpcData) 
           ? Object.keys(rpcData) 
@@ -755,7 +704,6 @@ export default function CompareResultPage() {
             stack: rpcError.stack,
             fullError: rpcError,
           });
-          setDevLastError(rpcError);
         }
         // #region agent log
         fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:390',message:'RPC error - returning null',data:{code:rpcError.code,message:rpcError.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
@@ -893,7 +841,6 @@ export default function CompareResultPage() {
           errorDetails,
           token: token ? token.substring(0, 12) + "..." : "N/A",
         });
-        setDevLastError(err);
       }
       return null;
     }
@@ -1039,36 +986,29 @@ export default function CompareResultPage() {
         });
       }
 
-    // Build AttemptData objects - use names from payload (attempts table via join)
-    // Single source of truth: name_a and name_b from RPC (built from attempts.user_first_name/last_name)
+    // Build AttemptData objects - use names from attempt_a and attempt_b
+    // Single source of truth: attempt_a and attempt_b from get_compare_payload_by_token
     // NO localStorage, NO cache, NO additional fetch from attempts table
     
-    // Parse name_a and name_b from payload (full names from attempts table)
+    // Read names from attempt_a and attempt_b (ALWAYS the correct source)
+    const attemptA = rpcData.attempt_a;
+    const attemptB = rpcData.attempt_b;
+    
     let attemptAFirstName: string | null = null;
     let attemptALastName: string | null = null;
     let attemptBFirstName: string | null = null;
     let attemptBLastName: string | null = null;
     
-    // name_a is full name from attempts table (user_first_name + user_last_name)
-    if (rpcData.name_a) {
-      const nameAParts = rpcData.name_a.trim().split(/\s+/);
-      attemptAFirstName = nameAParts[0] || null;
-      attemptALastName = nameAParts.length > 1 ? nameAParts.slice(1).join(' ') : null;
-    } else {
-      // Fallback to individual fields if name_a not available
-      attemptAFirstName = rpcData.a_user_first_name || null;
-      attemptALastName = rpcData.a_user_last_name || null;
+    // attempt_a is ALWAYS the inviter (person A)
+    if (attemptA) {
+      attemptAFirstName = attemptA.first_name || null;
+      attemptALastName = attemptA.last_name || null;
     }
     
-    // name_b is full name from attempts table (if attempt_b exists)
-    if (rpcData.name_b) {
-      const nameBParts = rpcData.name_b.trim().split(/\s+/);
-      attemptBFirstName = nameBParts[0] || null;
-      attemptBLastName = nameBParts.length > 1 ? nameBParts.slice(1).join(' ') : null;
-    } else if (rpcData.attempt_b_id) {
-      // Fallback to individual fields if name_b not available but attempt_b exists
-      attemptBFirstName = rpcData.b_user_first_name || null;
-      attemptBLastName = rpcData.b_user_last_name || null;
+    // attempt_b is the invited person (person B)
+    if (attemptB) {
+      attemptBFirstName = attemptB.first_name || null;
+      attemptBLastName = attemptB.last_name || null;
     }
     
     let attemptATotalScore: number | null = rpcData.a_total_score;
@@ -1085,15 +1025,15 @@ export default function CompareResultPage() {
         if (import.meta.env.DEV) {
       console.log("[CompareResultPage] 🔍 Names from payload:", {
         token: token ? token.substring(0, 12) + "..." : "N/A",
-        name_a: rpcData.name_a,
-        name_b: rpcData.name_b,
         attempt_a_id: rpcData.attempt_a_id,
-            attempt_b_id: rpcData.attempt_b_id,
+        attempt_b_id: rpcData.attempt_b_id,
         attemptAFirstName,
         attemptALastName,
         attemptBFirstName,
         attemptBLastName,
-        source: "attempts table (via join in RPC)",
+        attempt_a_present: !!attemptA,
+        attempt_b_present: !!attemptB,
+        source: "attempt_a and attempt_b from get_compare_payload_by_token",
       });
     }
     
@@ -1108,59 +1048,15 @@ export default function CompareResultPage() {
       return;
     }
     
-    // Use parsed dimension scores (will handle null/undefined gracefully)
-    // NOTE: Do NOT apply fallback here - preserve null/undefined values
-    // Fallback will be applied only at display time (in name computation)
-    const attemptAFirstNameFinal = attemptAFirstName; // Keep null/undefined, no fallback
-    const attemptBFirstNameFinal = attemptBFirstName; // Keep null/undefined, no fallback
-    
     if (import.meta.env.DEV) {
-      console.log("[CompareResultPage] 🔍 Final names before AttemptData:", {
-        attemptAFirstNameFinal,
-        attemptALastName,
-        attemptBFirstNameFinal,
-        attemptBLastName,
-        source: {
-          a: needsFetchA && attemptAFirstName ? "fetched" : "rpc",
-          b: needsFetchB && attemptBFirstName ? "fetched" : "rpc",
-        },
-      });
-    }
-    
-    if (import.meta.env.DEV) {
-      console.log("[CompareResultPage] 🔍 Mapped RPC fields:", {
+      console.log("[CompareResultPage] 🔍 Names from attempt_a and attempt_b:", {
         attemptAFirstName,
         attemptALastName,
         attemptBFirstName,
         attemptBLastName,
-        attemptATotalScore,
-        attemptBTotalScore,
-        aDimsRaw: aDimsRaw,
-        bDimsRaw: bDimsRaw,
-        aDimsRawType: typeof aDimsRaw,
-        bDimsRawType: typeof bDimsRaw,
-        aDimsRawIsNull: aDimsRaw === null,
-        bDimsRawIsNull: bDimsRaw === null,
-        rpcKeys: Object.keys(rpcData).join(", "),
-        // CRITICAL: Log raw RPC name fields to verify they're being returned
-        rpc_a_user_first_name: rpcData.a_user_first_name,
-        rpc_a_user_last_name: rpcData.a_user_last_name,
-        rpc_b_user_first_name: rpcData.b_user_first_name,
-        rpc_b_user_last_name: rpcData.b_user_last_name,
-        rpc_a_user_first_name_type: typeof rpcData.a_user_first_name,
-        rpc_b_user_first_name_type: typeof rpcData.b_user_first_name,
-        rpc_a_user_first_name_is_null: rpcData.a_user_first_name === null,
-        rpc_b_user_first_name_is_null: rpcData.b_user_first_name === null,
-        // Log normalizer results
-        normalizer_aFirst: aFirst,
-        normalizer_aLast: aLast,
-        normalizer_bFirst: bFirst,
-        normalizer_bLast: bLast,
-        // Log nested structure if exists
-        has_attempt_a: !!(rpcAny.attempt_a),
-        has_attempt_b: !!(rpcAny.attempt_b),
-        attempt_a_user_first_name: rpcAny.attempt_a?.user_first_name,
-        attempt_b_user_first_name: rpcAny.attempt_b?.user_first_name,
+        attempt_a_present: !!attemptA,
+        attempt_b_present: !!attemptB,
+        source: "get_compare_payload_by_token",
       });
     }
     
@@ -1168,9 +1064,9 @@ export default function CompareResultPage() {
     // NOTE: Preserve null/undefined values from RPC - do NOT apply fallback here
     const attemptAData: AttemptData = {
       id: rpcData.attempt_a_id,
-      user_first_name: attemptAFirstNameFinal, // May be null/undefined - fallback applied at display time
-      user_last_name: attemptALastName,
-      total_score: attemptATotalScore,
+      user_first_name: attemptAFirstName, // From attempt_a.first_name
+      user_last_name: attemptALastName, // From attempt_a.last_name
+      total_score: attemptATotalScore ?? 0, // Fallback to 0 if null
       dimension_scores: aDimsResult.scores, // Use scores from parse result
       score_band_id: rpcData.a_score_band_id,
       completed_at: new Date().toISOString(),
@@ -1178,9 +1074,9 @@ export default function CompareResultPage() {
 
     const attemptBData: AttemptData = {
       id: rpcData.attempt_b_id,
-      user_first_name: attemptBFirstNameFinal, // May be null/undefined - fallback applied at display time
-      user_last_name: attemptBLastName,
-      total_score: attemptBTotalScore,
+      user_first_name: attemptBFirstName, // From attempt_b.first_name
+      user_last_name: attemptBLastName, // From attempt_b.last_name
+      total_score: attemptBTotalScore ?? 0, // Fallback to 0 if null
       dimension_scores: bDimsResult.scores, // Use scores from parse result
       score_band_id: rpcData.b_score_band_id,
       completed_at: new Date().toISOString(),
@@ -1230,26 +1126,7 @@ export default function CompareResultPage() {
     setAttemptA(attemptAData);
     setAttemptB(attemptBData);
 
-    // Set score bands from RPC response (no need to query score_bands table)
-    if (rpcData.a_score_band_title && rpcData.a_score_band_id) {
-      setBandA({
-        id: rpcData.a_score_band_id,
-        slug: "", // RPC doesn't return slug, but we don't need it
-        title: rpcData.a_score_band_title,
-        min_score: 0, // RPC doesn't return these, but we don't need them
-        max_score: 0,
-      });
-    }
-
-    if (rpcData.b_score_band_title && rpcData.b_score_band_id) {
-      setBandB({
-        id: rpcData.b_score_band_id,
-        slug: "", // RPC doesn't return slug, but we don't need it
-        title: rpcData.b_score_band_title,
-        min_score: 0, // RPC doesn't return these, but we don't need them
-        max_score: 0,
-      });
-    }
+    // Score bands are available in RPC but not used in UI
 
     if (import.meta.env.DEV) {
       console.log("[CompareResultPage] Score bands from RPC:", {
@@ -1447,7 +1324,6 @@ export default function CompareResultPage() {
             errorDetails,
             token: token ? token.substring(0, 12) + "..." : "N/A",
           });
-          setDevLastError(processError);
         }
         // #region agent log
         fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:771',message:'processCompareData threw error',data:{errorMessage:processError instanceof Error?processError.message:'unknown',errorStack:processError instanceof Error?processError.stack:null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
@@ -1473,12 +1349,10 @@ export default function CompareResultPage() {
             attemptB: attemptB ? { id: attemptB.id.substring(0, 8) + "..." } : null,
             comparison: comparison ? "exists" : null,
         });
-          setDevLastError(err);
       }
       // #region agent log
       fetch('http://127.0.0.1:7243/ingest/fb99dfc7-ad09-4314-aff7-31e67b3ec776',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CompareResultPage.tsx:780',message:'Caught exception in loadCompareResult',data:{errorMessage:err instanceof Error?err.message:'unknown',errorName:err instanceof Error?err.name:'unknown',hasToken:!!token},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
       // #endregion
-      const errorMsg = err instanceof Error ? err.message : "Unknown error";
       setError("یه مشکلی پیش اومده و این مقایسه الان در دسترس نیست. اگه دوباره امتحانش کنی یا لینک جدید بسازی، درست می‌شه.");
         setLoading(false);
       }
@@ -1966,7 +1840,6 @@ export default function CompareResultPage() {
     return (
       <div className="min-h-screen p-4 py-8 bg-gradient-to-b from-background to-background/50">
         <div className="max-w-4xl mx-auto space-y-8">
-          {devDebugPanel}
           <div className="min-h-screen flex items-center justify-center p-4">
             <div className="text-center space-y-4 max-w-md">
               <h1 className="text-xl text-foreground font-medium">مشکل در بارگذاری</h1>
@@ -2086,25 +1959,6 @@ export default function CompareResultPage() {
     });
   }
   
-  // Check if CTA should be shown
-  const showCTA = shouldShowCTA({
-    stickiness: {
-      aLevel: comparison.dimensions.stickiness.aLevel,
-      bLevel: comparison.dimensions.stickiness.bLevel,
-    },
-    pastBrooding: {
-      aLevel: comparison.dimensions.pastBrooding.aLevel,
-      bLevel: comparison.dimensions.pastBrooding.bLevel,
-    },
-    futureWorry: {
-      aLevel: comparison.dimensions.futureWorry.aLevel,
-      bLevel: comparison.dimensions.futureWorry.bLevel,
-    },
-    interpersonal: {
-      aLevel: comparison.dimensions.interpersonal.aLevel,
-      bLevel: comparison.dimensions.interpersonal.bLevel,
-    },
-  });
 
   // Share handlers
   const handleCopyLink = async () => {
@@ -2246,12 +2100,13 @@ export default function CompareResultPage() {
       const blob = await generatePdfBlob(pdfDocument);
       downloadPdf(blob, filename);
       
-      await trackShareEvent({
-        cardType: "compare_minds",
-        action: "download_pdf",
-        compareSessionId: session?.id ?? null,
-        inviteToken: token ?? null,
-      });
+      // Note: PDF download tracking not supported by trackShareEvent
+      // await trackShareEvent({
+      //   cardType: "compare_minds",
+      //   action: "download_pdf",
+      //   compareSessionId: session?.id ?? null,
+      //   inviteToken: token ?? null,
+      // });
 
       toast.success("PDF دانلود شد");
     } catch (error) {
@@ -2294,20 +2149,22 @@ export default function CompareResultPage() {
       const result = await sharePdf(blob, filename);
 
       if (result.method === "share" && result.success) {
-        await trackShareEvent({
-          cardType: "compare_minds",
-          action: "share_pdf",
-          compareSessionId: session?.id ?? null,
-          inviteToken: token ?? null,
-        });
+        // Note: PDF share tracking not supported by trackShareEvent
+        // await trackShareEvent({
+        //   cardType: "compare_minds",
+        //   action: "share_pdf",
+        //   compareSessionId: session?.id ?? null,
+        //   inviteToken: token ?? null,
+        // });
         toast.success("PDF به اشتراک گذاشته شد");
       } else if (result.method === "download") {
-        await trackShareEvent({
-          cardType: "compare_minds",
-          action: "download_pdf",
-          compareSessionId: session?.id ?? null,
-          inviteToken: token ?? null,
-        });
+        // Note: PDF download tracking not supported by trackShareEvent
+        // await trackShareEvent({
+        //   cardType: "compare_minds",
+        //   action: "download_pdf",
+        //   compareSessionId: session?.id ?? null,
+        //   inviteToken: token ?? null,
+        // });
         toast.info("مرورگر شما اشتراک‌گذاری مستقیم PDF را پشتیبانی نمی‌کند؛ فایل دانلود شد.");
       } else {
         toast.error("خطا در اشتراک‌گذاری PDF");
@@ -2347,7 +2204,7 @@ export default function CompareResultPage() {
     <div className="min-h-screen p-4 py-8 bg-gradient-to-b from-background to-background/50">
       <div id="compare-pdf-root" className="max-w-4xl mx-auto space-y-8" ref={compareContentRef}>
         {/* STATE C: Expired link note (if applicable) */}
-        {isExpired && (
+        {false && (
           <Card className="bg-orange-500/10 backdrop-blur-2xl border-orange-500/20">
             <CardContent className="pt-6 text-center space-y-4">
               <p className="text-sm text-foreground/80 leading-relaxed font-medium">

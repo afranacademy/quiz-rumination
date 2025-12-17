@@ -10,7 +10,7 @@ export type ResultSummaryInput = {
 import { INVITE_LINK_TEXT, INVITE_LINK_URL } from "@/utils/pdfConstants";
 
 export function buildResultSummaryText(input: ResultSummaryInput): string {
-  const { firstName, levelLabel, score, maxScore, quizTitle, url } = input;
+  const { firstName, levelLabel, score, maxScore, quizTitle, url: _url } = input;
   
   const nameLine = firstName ? `${firstName}، ` : "";
   const quizLine = `${quizTitle}`;

@@ -2,7 +2,7 @@ import type { DimensionKey } from "@/domain/quiz/types";
 import { DIMENSIONS } from "@/domain/quiz/dimensions";
 import type { CompareState } from "./buildCompareState";
 
-type Relation = "similar" | "different" | "very_different";
+// type Relation = "similar" | "different" | "very_different"; // Unused
 
 export type AggregatedInsights = {
   similarDims: DimensionKey[];

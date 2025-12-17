@@ -1,6 +1,7 @@
-import { pdf } from "@react-pdf/renderer";
+import { pdf, type DocumentProps } from "@react-pdf/renderer";
 import { Font } from "@react-pdf/renderer";
-import React from "react";
+import type { ReactElement } from "react";
+// import React from "react"; // Unused (React 17+)
 
 // Import TTF fonts using Vite's ?url suffix for production-safe asset URLs
 // Vite will handle bundling and provide the correct URL at build time
@@ -60,7 +61,7 @@ registerPeydaFont();
  * @returns Promise that resolves to a Blob
  */
 export async function buildPdfBlob(
-  document: React.ReactElement
+  document: ReactElement<DocumentProps>
 ): Promise<Blob> {
   // Font is already registered at module load time
   // registerPeydaFont() is called when this module is imported
@@ -104,7 +105,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
  * @param filename - Name of the file (should include .pdf extension)
  */
 export async function buildAndDownloadPdf(
-  document: React.ReactElement,
+  document: ReactElement<DocumentProps>,
   filename: string
 ): Promise<void> {
   const blob = await buildPdfBlob(document);

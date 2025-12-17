@@ -20,10 +20,7 @@ const reassuranceText: Record<LevelKey, string> = {
   high: "برای خروج تدریجی از چرخه‌ی نشخوار و بازسازی آرامش ذهن.",
 };
 
-export function RecommendationSection({ title, paragraphs, ctas, level, firstName, levelLabel, score }: RecommendationSectionProps) {
-  const reasonLine = firstName 
-    ? `${firstName}، با توجه به اینکه سطح شما «${levelLabel}» شده، این پیشنهاد اختصاصی برای شماست.`
-    : `با توجه به اینکه سطح شما «${levelLabel}» شده، این پیشنهاد اختصاصی برای شماست.`;
+export function RecommendationSection({ title: _title, paragraphs, ctas, level, firstName, levelLabel, score }: RecommendationSectionProps) {
 
   return (
     <div className="relative my-8 text-right">

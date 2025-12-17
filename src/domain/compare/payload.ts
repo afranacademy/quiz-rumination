@@ -2,7 +2,7 @@ import type { Comparison } from "./types";
 import type { DimensionKey } from "../quiz/types";
 import { buildInviteTextForCopy } from "@/utils/inviteCta";
 
-export type CompareRelation = "similar" | "different";
+export type CompareRelation = "similar" | "different" | "very_different";
 
 export type CompareDimensionPayload = {
   key: DimensionKey;

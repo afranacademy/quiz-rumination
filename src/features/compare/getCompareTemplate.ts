@@ -1,5 +1,6 @@
 import { COMPARE_TEMPLATES, findTemplatesByMetadata, type CompareTemplate } from "./templates/compareText.fa";
-import type { Section, DimensionKey, Relation, Direction, Variance } from "./templates/compareText.fa";
+import type { Section, Relation, Direction, Variance } from "./templates/compareText.fa";
+import type { DimensionKey } from "@/domain/quiz/types";
 import type { CompareState } from "./buildCompareState";
 
 /**

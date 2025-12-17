@@ -46,9 +46,15 @@ export async function getQuizId(): Promise<string> {
       throw new Error("Rumination quiz not found in database");
     }
 
-    console.log("[getQuizId] Quiz ID:", data.id);
-    quizIdCache = data.id;
-    return quizIdCache;
+    const quizId: string = data.id;
+    if (!quizId) {
+      quizIdCachePromise = null;
+      throw new Error("Rumination quiz not found in database");
+    }
+
+    console.log("[getQuizId] Quiz ID:", quizId);
+    quizIdCache = quizId;
+    return quizId;
   })();
 
   return quizIdCachePromise;

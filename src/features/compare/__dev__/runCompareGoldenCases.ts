@@ -171,8 +171,12 @@ export function runCompareGoldenCases(): void {
 
       // Felt experience
       try {
-        const { template } = selectFeltExperienceTemplate(compareState);
-        selections["felt_experience"] = template.id;
+        const result = selectFeltExperienceTemplate(compareState);
+        if (!result) {
+          selections["felt_experience"] = "null (no template found)";
+        } else {
+          selections["felt_experience"] = result.template.id;
+        }
       } catch (e) {
         selections["felt_experience"] = `ERROR: ${e instanceof Error ? e.message : String(e)}`;
       }

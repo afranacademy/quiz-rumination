@@ -1,4 +1,4 @@
-import type { LikertValue } from "../types";
+// import type { LikertValue } from "@/features/quiz/types"; // Unused
 
 export type QuestionInsightRule = {
   questionIndex: number; // 0..11

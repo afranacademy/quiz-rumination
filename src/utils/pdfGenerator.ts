@@ -1,5 +1,6 @@
-import { pdf } from "@react-pdf/renderer";
-import { toast } from "sonner";
+import { pdf, type DocumentProps } from "@react-pdf/renderer";
+// import { toast } from "sonner"; // Unused
+import type { ReactElement } from "react";
 // Import buildPdf to trigger font registration (Peyda TTF fonts)
 // This ensures fonts are registered before PDF generation
 import "../pdf/buildPdf";
@@ -20,7 +21,7 @@ function sanitizeFilename(name: string | null | undefined): string {
  * Generates a PDF blob from a React PDF Document component
  */
 export async function generatePdfBlob(
-  document: React.ReactElement
+  document: ReactElement<DocumentProps>
 ): Promise<Blob> {
   try {
     // Font registration is handled in src/pdf/buildPdf.ts

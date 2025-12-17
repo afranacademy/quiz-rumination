@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useNavigate, useSearchParams, useParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { QuizPage as QuizPageComponent } from "@/app/components/QuizPage";
 import { scoreAfranR14 } from "@/features/quiz/scoring/scoreAfranR14";
 import { getLevel } from "@/features/quiz/scoring/levelsAfranR14";
@@ -8,20 +8,20 @@ import { updateAttemptAnswers, completeAttempt, markAttemptAbandoned, startAttem
 import { computeTotalScore, normalizeAnswers } from "@/domain/quiz/scoring";
 import { computeDimensionScores } from "@/domain/quiz/dimensions";
 import { useAnonAuth } from "@/hooks/useAnonAuth";
-import { completeSession } from "@/api/compare";
-import { completeCompareSession } from "@/features/compare/completeCompareSession";
+// import { completeSession } from "@/api/compare"; // Unused
+// import { completeCompareSession } from "@/features/compare/completeCompareSession"; // Unused
 import { supabase } from "@/lib/supabaseClient";
 import { getAttemptStorageKey } from "@/features/attempts/getAttemptStorageKey";
 import { getQuizId } from "@/features/attempts/getQuizId";
 import { getCompareSession } from "@/features/compare/getCompareSession";
-import { InviteIdentityGate } from "@/features/compare/InviteIdentityGate";
+// import { InviteIdentityGate } from "@/features/compare/InviteIdentityGate"; // Unused
 import { getInviteTokenSafe } from "@/features/compare/getInviteToken";
 import type { LikertValue, LevelKey } from "@/features/quiz/types";
 
 export default function QuizPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const params = useParams();
+  // const params = useParams(); // Unused
   const inviteToken = searchParams.get("invite");
   
   // Get invite token (only set in /compare/invite/:token route)
@@ -42,7 +42,7 @@ export default function QuizPage() {
   const [attemptId, setAttemptId] = useState<string | null>(null);
   const [quizId, setQuizId] = useState<string | null>(null);
   const answersRef = useRef<Record<number, LikertValue>>({});
-  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const updateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [lastOperationError, setLastOperationError] = useState<string | null>(null);
   const abandonedAttemptsRef = useRef<Set<string>>(new Set());
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -50,7 +50,7 @@ export default function QuizPage() {
   
   // Identity gate state for invited users
   const [showIdentityGate, setShowIdentityGate] = useState(false);
-  const [inviterName, setInviterName] = useState<string | null>(null);
+  const [_inviterName, setInviterName] = useState<string | null>(null);
   const [identityData, setIdentityData] = useState<{ firstName: string; lastName?: string; phone: string } | null>(null);
 
   // Load quiz ID and attempt ID with ownership validation
@@ -738,32 +738,32 @@ export default function QuizPage() {
     }
   };
 
-  // Handle identity gate submission
-  const handleIdentityGateSubmit = (data: { firstName: string; lastName?: string; phone: string }) => {
-    if (!compareToken) return;
-    
-    // Store identity data
-    setIdentityData(data);
-    
-    // Mark identity gate as done
-    const identityGateKey = `afran_invited_identity_done_${compareToken}`;
-    sessionStorage.setItem(identityGateKey, "1");
-    sessionStorage.setItem(`afran_invited_identity_${compareToken}`, JSON.stringify(data));
-    
-    // Close gate
-    setShowIdentityGate(false);
-    
-    if (import.meta.env.DEV) {
-      console.log("[QuizPage] Identity gate submitted:", {
-        firstName: data.firstName,
-        lastName: data.lastName,
-        phone: data.phone.substring(0, 4) + "***",
-      });
-    }
-    
-    // Reload attempt (will create new attempt with identity data)
-    window.location.reload();
-  };
+  // Handle identity gate submission - unused, removed
+  // const _handleIdentityGateSubmit = (data: { firstName: string; lastName?: string; phone: string }) => {
+  //   if (!compareToken) return;
+  //   
+  //   // Store identity data
+  //   setIdentityData(data);
+  //   
+  //   // Mark identity gate as done
+  //   const identityGateKey = `afran_invited_identity_done_${compareToken}`;
+  //   sessionStorage.setItem(identityGateKey, "1");
+  //   sessionStorage.setItem(`afran_invited_identity_${compareToken}`, JSON.stringify(data));
+  //   
+  //   // Close gate
+  //   setShowIdentityGate(false);
+  //   
+  //   if (import.meta.env.DEV) {
+  //     console.log("[QuizPage] Identity gate submitted:", {
+  //       firstName: data.firstName,
+  //       lastName: data.lastName,
+  //       phone: data.phone.substring(0, 4) + "***",
+  //     });
+  //   }
+  //   
+  //   // Reload attempt (will create new attempt with identity data)
+  //   window.location.reload();
+  // };
 
   // Show loading if auth is still loading or attempt ID is missing (and identity gate not shown)
   if (authLoading || (!attemptId && !showIdentityGate)) {

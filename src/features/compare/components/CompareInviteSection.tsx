@@ -16,7 +16,7 @@ interface CompareInviteSectionProps {
   attemptId?: string | null;
 }
 
-export function CompareInviteSection({ attemptId }: CompareInviteSectionProps) {
+export function CompareInviteSection({ attemptId: _attemptId }: CompareInviteSectionProps) {
   const navigate = useNavigate();
   const { userId, loading: authLoading } = useAnonAuth();
   const [modalState, setModalState] = useState<{

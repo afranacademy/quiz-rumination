@@ -375,8 +375,6 @@ export async function generatePdfBlobFromElement(
       height: clone.scrollHeight,
       windowWidth: clone.scrollWidth,
       windowHeight: clone.scrollHeight,
-      // CRITICAL: Don't parse window/document stylesheets - only use inline styles
-      windowStyles: false,
       // Ignore all style and link elements to prevent any stylesheet parsing
       ignoreElements: (element) => {
         const tagName = element.tagName?.toLowerCase();
@@ -593,7 +591,7 @@ export function downloadPdf(blob: Blob, filename: string): void {
 export async function sharePdf(
   blob: Blob,
   filename: string,
-  shareMeta: { title: string; text: string }
+  _shareMeta: { title: string; text: string }
 ): Promise<{ method: "share" | "download"; success: boolean; error?: string }> {
   // Check if file sharing is supported
   if (typeof navigator.share !== "undefined") {

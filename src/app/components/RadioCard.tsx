@@ -7,7 +7,7 @@ interface RadioCardProps {
   onClick: () => void;
 }
 
-export function RadioCard({ value, label, selected, onClick }: RadioCardProps) {
+export function RadioCard({ value: _value, label, selected, onClick }: RadioCardProps) {
   return (
     <button
       type="button"

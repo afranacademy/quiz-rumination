@@ -192,7 +192,7 @@ export function generatePerPersonProfile(
   dimensionScores: Record<DimensionKey, number>
 ): string {
   const summary = computePerPersonProfileSummary(dimensionScores);
-  const { isUniform, overallIntensity, topDimension, tieType } = summary;
+  const { isUniform: _isUniform, overallIntensity, topDimension, tieType } = summary;
   const overallIntensityLabel = LEVEL_LABELS[overallIntensity];
 
   // Case A: uniform tie

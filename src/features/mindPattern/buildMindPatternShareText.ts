@@ -3,7 +3,7 @@ import { buildInviteTextForCopy } from "@/utils/inviteCta";
 
 export function buildMindPatternShareText(
   items: MindPatternItem[],
-  quizUrl: string
+  _quizUrl: string
 ): string {
   // Use all 12 items (not just selected highlights)
   // Filter out any null/undefined items as guard

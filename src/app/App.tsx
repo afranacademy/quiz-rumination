@@ -4,7 +4,6 @@ import LandingPage from "@/pages/LandingPage";
 import QuizPage from "@/pages/QuizPage";
 import ResultPage from "@/pages/ResultPage";
 import InvitePage from "@/pages/InvitePage";
-import ComparePage from "@/pages/ComparePage";
 import CompareInvitePage from "@/pages/CompareInvitePage";
 import CompareLandingPage from "@/pages/CompareLandingPage";
 import CompareResultPage from "@/pages/CompareResultPage";
@@ -19,7 +18,7 @@ import CompareDevLatestPage from "@/pages/CompareDevLatestPage";
 
 export default function App() {
   // Initialize anonymous auth for all visitors
-  const { userId, loading: authLoading, error: authError } = useAnonAuth();
+  const { error: authError } = useAnonAuth();
 
   // Log auth state for debugging
   if (authError) {

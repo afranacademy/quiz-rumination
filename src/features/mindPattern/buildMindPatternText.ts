@@ -1,4 +1,4 @@
-import type { LikertValue } from "../types";
+import type { LikertValue } from "@/features/quiz/types";
 import { RUMINATION_INSIGHT_RULES } from "./ruminationInsights";
 
 export function buildMindPatternText(input: {
@@ -24,7 +24,7 @@ export function buildMindPatternText(input: {
       throw new Error(`Missing insight rule for question ${i}`);
     }
     const answer = answersRaw[i];
-    const insight = rule.insightsByAnswer[answer];
+    const insight = rule.insightsByAnswer[answer as keyof typeof rule.insightsByAnswer];
     if (!insight) {
       throw new Error(`Missing insight for question ${i}, answer ${answer}`);
     }

@@ -43,12 +43,12 @@ export type RenderedCompareText = {
   safetyText: string;
 };
 
-// Level labels
-const LEVEL_LABELS: Record<"low" | "medium" | "high", string> = {
-  low: "کم",
-  medium: "متوسط",
-  high: "زیاد",
-};
+// Level labels - unused, removed
+// const LEVEL_LABELS: Record<"low" | "medium" | "high", string> = {
+//   low: "کم",
+//   medium: "متوسط",
+//   high: "زیاد",
+// };
 
 /**
  * Builds complete share/copy text from CompareState + rendered templates.
@@ -120,29 +120,29 @@ export function buildCompareShareText(
   lines.push("");
   
   // Similarities
-  lines.push("شباهت‌ها:");
-  if (rendered.similaritiesList.length > 0) {
-    for (const dim of rendered.similaritiesList) {
-      lines.push(`• ${DIMENSION_LABELS[dim]}`);
-    }
-  } else {
+    lines.push("شباهت‌ها:");
+    if (rendered.similaritiesList.length > 0) {
+      for (const dim of rendered.similaritiesList) {
+        lines.push(`• ${DIMENSION_LABELS[dim]}`);
+      }
+    } else {
     // ✅ FIX: Add the new explanatory line (exactly as in UI)
     lines.push("در این نتایج، همسویی کامل کمتر دیده می‌شود؛ این نشانه‌ی تفاوت سبک‌هاست، نه مشکل.");
     lines.push("شباهت‌ها اینجا بیشتر در «ریتم و سبک پردازش» دیده می‌شوند، نه الزاماً در «سطح شدت».");
-  }
-  lines.push("");
+    }
+    lines.push("");
   
   // Differences
-  lines.push("تفاوت‌ها:");
-  if (rendered.differencesList.length > 0) {
-    for (const dim of rendered.differencesList) {
-      const dimState = state.dimensions[dim];
-      const veryDiffLabel = dimState.relation === "very_different" ? " (خیلی متفاوت)" : "";
-      lines.push(`• ${DIMENSION_LABELS[dim]}${veryDiffLabel}`);
+    lines.push("تفاوت‌ها:");
+    if (rendered.differencesList.length > 0) {
+      for (const dim of rendered.differencesList) {
+        const dimState = state.dimensions[dim];
+        const veryDiffLabel = dimState.relation === "very_different" ? " (خیلی متفاوت)" : "";
+        lines.push(`• ${DIMENSION_LABELS[dim]}${veryDiffLabel}`);
+      }
+    } else {
+      lines.push("در این نتایج، تفاوت چشمگیری بین شما دیده نشد. این یعنی در چند الگوی کلیدی، واکنش ذهنی‌تان شبیه‌تر است.");
     }
-  } else {
-    lines.push("در این نتایج، تفاوت چشمگیری بین شما دیده نشد. این یعنی در چند الگوی کلیدی، واکنش ذهنی‌تان شبیه‌تر است.");
-  }
   
   // ✅ FIX: Add quantized phrasing (exactly as in UI)
   if (rendered.differencesList.length > 0) {

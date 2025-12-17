@@ -65,6 +65,8 @@ export function normalizeAnswers(input: unknown): Answers12 {
     normalized.push(value as AnswerValue);
   }
 
-  return normalized as Answers12;
+  // TypeScript requires going through 'unknown' for this intentional conversion
+  // We've validated that normalized has exactly 12 AnswerValue elements
+  return normalized as unknown as Answers12;
 }
 

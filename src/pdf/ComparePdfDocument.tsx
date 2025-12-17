@@ -9,8 +9,9 @@ import {
 } from "@react-pdf/renderer";
 import type { DimensionKey } from "@/domain/quiz/types";
 import type { CompareNarratives } from "@/features/compare/getCompareNarratives";
-import { DIMENSIONS } from "@/domain/quiz/dimensions";
-import { PDF_RTL } from "../theme/rtl";
+// import { DIMENSIONS } from "@/domain/quiz/dimensions"; // Unused
+// PDF_RTL imported but unused - removed to fix module resolution
+// import { PDF_RTL } from "../theme/rtl";
 import { ITEM_MIN_PRESENCE } from "./theme/pagination";
 import { PdfCtaLink } from "./components/PdfCtaLink";
 import { formatPersianDate } from "@/utils/formatPersianDate";
@@ -323,7 +324,7 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
     console.log("[PDF] now:", safeNow.toISOString(), formatPersianDate(safeNow));
   }
 
-  const dimensionKeys: DimensionKey[] = DIMENSIONS;
+  // const dimensionKeys: readonly DimensionKey[] = DIMENSIONS; // Unused
 
   return (
     <Document>
@@ -608,8 +609,8 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
                     >
                       اگر دیده نشود
                     </Text>
-                    {narratives.seenUnseenConsequences?.unseen.map(
-                      (item, idx) => (
+                    {(narratives as any).seenUnseenConsequences?.unseen?.map(
+                      (item: string, idx: number) => (
                         <View key={idx} style={styles.listItem}>
                           <Text style={[styles.bullet, styles.bulletBox]}>•</Text>
                           <Text style={[styles.textSmall, styles.listText]}>{item}</Text>
@@ -626,8 +627,8 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
                     >
                       اگر دیده شود
                     </Text>
-                    {narratives.seenUnseenConsequences?.seen.map(
-                      (item, idx) => (
+                    {(narratives as any).seenUnseenConsequences?.seen?.map(
+                      (item: string, idx: number) => (
                         <View key={idx} style={styles.listItem}>
                           <Text style={[styles.bullet, styles.bulletBox]}>•</Text>
                           <Text style={[styles.textSmall, styles.listText]}>{item}</Text>
@@ -659,10 +660,10 @@ export const ComparePdfDocument: React.FC<ComparePdfDocumentProps> = ({
                 <View wrap={false} style={styles.sectionTitleWrapper}>
                   <Text style={styles.sectionTitle}>شروع گفت‌وگو</Text>
                 </View>
-                {narratives.conversationStarters && narratives.conversationStarters.length > 0 && (
+                {(narratives as any).conversationStarters && (narratives as any).conversationStarters.length > 0 && (
                   <View wrap={false} minPresenceAhead={ITEM_MIN_PRESENCE} style={styles.card}>
-                    {narratives.conversationStarters.map(
-                      (q, idx) => (
+                    {((narratives as any).conversationStarters as string[]).map(
+                      (q: string, idx: number) => (
                         <View
                           wrap={false}
                           minPresenceAhead={60}

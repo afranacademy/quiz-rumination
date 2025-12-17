@@ -2,7 +2,7 @@ import type { Comparison } from "@/domain/compare/types";
 import type { DimensionKey } from "@/domain/quiz/types";
 import { DIMENSIONS } from "@/domain/quiz/dimensions";
 import { getLargestDifferenceDimension } from "./relationalContent";
-import { computeSimilarity } from "./computeSimilarity";
+// import { computeSimilarity } from "./computeSimilarity"; // Unused
 import { getMisunderstandingRisk } from "./relationalContent";
 
 export type Direction = "A_higher" | "B_higher" | "none";

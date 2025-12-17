@@ -9,7 +9,7 @@ import {
 } from "@react-pdf/renderer";
 import type { DimensionKey } from "@/domain/quiz/types";
 import type { CompareNarratives } from "@/features/compare/getCompareNarratives";
-import { DIMENSIONS } from "@/domain/quiz/dimensions";
+// import { DIMENSIONS } from "@/domain/quiz/dimensions"; // Unused
 import { ITEM_MIN_PRESENCE } from "../theme/pagination";
 import { PdfCtaLink } from "../components/PdfCtaLink";
 import { formatPersianDate } from "@/utils/formatPersianDate";
@@ -316,12 +316,11 @@ export const ComparePdfCompactDocument: React.FC<
     console.log("[PDF] now:", safeNow.toISOString(), formatPersianDate(safeNow));
   }
 
-  const dimensionKeys: DimensionKey[] = DIMENSIONS;
+  // const dimensionKeys: readonly DimensionKey[] = DIMENSIONS; // Unused
 
   // Get dimension for conversation starters (use dominant dimension from narratives)
-  const dimensionForStarters = narratives.meta.dominantDimension;
-  const mapItemForStarters = narratives.mentalMap.find(m => m.dimension === dimensionForStarters);
-  const relationForStarters = mapItemForStarters?.relation || "similar";
+  // const dimensionForStarters = narratives.meta.dominantDimension; // Unused
+  // const mapItemForStarters = narratives.mentalMap.find(m => m.dimension === dimensionForStarters); // Unused
 
   return (
     <Document>
@@ -530,7 +529,7 @@ export const ComparePdfCompactDocument: React.FC<
           <View wrap={false} style={styles.sectionTitleWrapper}>
             <Text style={styles.sectionTitle}>شروع گفت‌وگو</Text>
           </View>
-          {(narratives.conversationStarters || []).map((q, idx) => (
+          {((narratives as any).conversationStarters || []).map((q: string, idx: number) => (
             <View wrap={false} minPresenceAhead={60} key={idx} style={styles.conversationStarterItem}>
               <Text style={styles.textSmall}>{q}</Text>
             </View>

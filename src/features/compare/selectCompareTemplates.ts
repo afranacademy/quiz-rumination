@@ -1,7 +1,7 @@
-import type { CompareState, DimensionState } from "./buildCompareState";
+import type { CompareState } from "./buildCompareState";
 import type { CompareTemplate } from "./templates/compareText.fa";
 import type { DimensionKey } from "@/domain/quiz/types";
-import { DIMENSIONS } from "@/domain/quiz/dimensions";
+// import { DIMENSIONS } from "@/domain/quiz/dimensions"; // Unused
 import { getCompareTemplate } from "./getCompareTemplate";
 import { findTemplatesByMetadata } from "./templates/compareText.fa";
 import type { CompareNarrativeTrace } from "./types";

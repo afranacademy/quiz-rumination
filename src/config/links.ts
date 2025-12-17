@@ -1,4 +1,4 @@
-import { TEST_LINK, COURSE_LINK, EPISODE0_LINK } from "@/constants/links";
+import { COURSE_LINK, EPISODE0_LINK } from "@/constants/links";
 
 /**
  * Single source of truth for external links used throughout the application

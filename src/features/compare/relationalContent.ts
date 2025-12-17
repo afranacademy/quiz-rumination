@@ -136,10 +136,10 @@ export function generateCentralInterpretation(
   dimensionKey: DimensionKey,
   nameA: string,
   nameB: string,
-  aLevel: "low" | "medium" | "high",
-  bLevel: "low" | "medium" | "high",
-  aScore: number,
-  bScore: number,
+  _aLevel: "low" | "medium" | "high",
+  _bLevel: "low" | "medium" | "high",
+  _aScore: number,
+  _bScore: number,
   relation: "similar" | "different" | "very_different",
   direction: "a_higher" | "b_higher" | "equal"
 ): string {
@@ -575,7 +575,7 @@ export function getTopDimensionForPerson(
 export function generateMindSnapshot(
   name: string,
   topDimension: DimensionKey,
-  dimensionScores: Record<DimensionKey, number>
+  _dimensionScores: Record<DimensionKey, number>
 ): string {
   const dimensionContexts: Record<DimensionKey, string> = {
     stickiness: "بعد از بحث یا موضوع ناتمام",
@@ -714,8 +714,8 @@ export function generateMisunderstandingLoop(
 // Generate emotional experience for both people
 export function generateEmotionalExperience(
   dimensionKey: DimensionKey,
-  nameA: string,
-  nameB: string,
+  _nameA: string,
+  _nameB: string,
   aLevel: "low" | "medium" | "high",
   bLevel: "low" | "medium" | "high",
   relation?: "similar" | "different" | "very_different"
@@ -831,9 +831,9 @@ import { buildInviteTextForCopy } from "@/utils/inviteCta";
 
 // Update generateSafeShareText with standard text
 export function generateSafeShareText(
-  nameA: string,
-  nameB: string,
-  overallSimilarity: "low" | "medium" | "high",
+  _nameA: string,
+  _nameB: string,
+  _overallSimilarity: "low" | "medium" | "high",
   largestDiffKey: DimensionKey | null
 ): string {
   const lines: string[] = [

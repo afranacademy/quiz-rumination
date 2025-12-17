@@ -4,13 +4,13 @@ import { Button } from "@/app/components/ui/button";
 import { AppModal } from "@/components/AppModal";
 import { SocialFeatureCard } from "./SocialFeatureCard";
 import { Share2, Check, Copy } from "lucide-react";
-import { shareOrCopyText, copyText } from "@/features/share/shareClient";
+// import { shareOrCopyText, copyText } from "@/features/share/shareClient"; // Unused
 import { buildSummaryPdfBlob } from "@/features/share/buildSummaryPdf";
 import { pickSummaryRange } from "@/features/share/summaryRanges";
 import type { LevelKey } from "../types";
 import { CompareInviteSection } from "@/features/compare/components/CompareInviteSection";
 import { MindPatternCard } from "./MindPatternCard";
-import { buildInviteTextForShare, buildInviteTextForCopy, buildInviteCta, CTA_URL, shareInvite, copyInvite } from "@/utils/inviteCta";
+import { buildInviteCta, CTA_URL, shareInvite, copyInvite } from "@/utils/inviteCta";
 
 interface SocialShareSectionProps {
   level: LevelKey;
@@ -39,22 +39,9 @@ export function SocialShareSection({
 
   const quizTitle = "آزمون سنجش نشخوار فکری (ذهن وراج)";
   const maxScore = 48;
-  const currentUrl = typeof window !== "undefined" ? window.location.href : undefined;
 
   // Get summary range based on score
   const summaryRange = pickSummaryRange(score);
-  
-  // Build summary text for copy (includes URL)
-  const summaryTextForCopy = (() => {
-    const lines = [
-      summaryRange.text,
-      "",
-      `امتیاز: ${score} از ${maxScore}`,
-      "",
-      buildInviteTextForCopy(), // CTA + URL on separate line
-    ];
-    return lines.join("\n");
-  })();
 
 
 

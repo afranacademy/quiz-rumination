@@ -7,8 +7,9 @@ import {
   StyleSheet,
   Image,
 } from "@react-pdf/renderer";
-import { PDF_RTL } from "../theme/rtl";
-import { ITEM_MIN_PRESENCE, listItemContainer } from "./theme/pagination";
+// PDF_RTL imported but unused - removed to fix module resolution
+// import { PDF_RTL } from "../theme/rtl";
+import { ITEM_MIN_PRESENCE } from "./theme/pagination";
 import { PdfCtaLink } from "./components/PdfCtaLink";
 import { formatPersianDate } from "@/utils/formatPersianDate";
 

@@ -43,7 +43,7 @@ export async function getCompareSession(token: string): Promise<CompareSession |
         message: rpcError.message,
         details: rpcError.details,
         hint: rpcError.hint,
-        status: rpcError.status || "N/A",
+        status: (rpcError as any).status || "N/A",
         token: trimmedToken.substring(0, 12) + "...",
       });
       console.error("[getCompareSession] Full error object:", rpcError);
@@ -135,7 +135,6 @@ export async function getCompareSession(token: string): Promise<CompareSession |
       query_path: "RPC get_compare_token_by_token",
       data: row,
       error: null,
-      status: "valid",
     });
   }
 

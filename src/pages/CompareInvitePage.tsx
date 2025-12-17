@@ -57,19 +57,8 @@ export default function CompareInvitePage() {
           length: trimmedToken.length,
         });
 
-        // Mark invite as opened (idempotent)
-        await supabase.rpc('mark_compare_invite_opened', {
-          p_invite_token: trimmedToken
-        });
-
-        // Get inviter display name
-        const { data: nameData, error: nameError } = await supabase.rpc(
-          'get_compare_inviter_display_name_by_token',
-          { p_invite_token: trimmedToken }
-        );
-
-        // Get session data
-        const { data, error } = await supabase.rpc('get_compare_token_by_token', {
+        // Get payload using the ONLY correct RPC
+        const { data, error } = await supabase.rpc('get_compare_payload_by_token', {
           p_invite_token: trimmedToken
         });
 
@@ -97,7 +86,7 @@ export default function CompareInvitePage() {
           return;
         }
 
-        const tokenRow = Array.isArray(data) ? data[0] : data;
+        const payload = Array.isArray(data) ? data[0] : data;
 
         // Check expiry using getTime() for accurate comparison
         // Handle parse failures gracefully (show "خطا در بارگذاری" not "منقضی")
@@ -105,16 +94,16 @@ export default function CompareInvitePage() {
         let expiresAtMs: number | null = null;
         const nowMs = Date.now();
         
-        if (tokenRow.expires_at) {
-          const parsedExpiresAt = Date.parse(tokenRow.expires_at);
+        if (payload.expires_at) {
+          const parsedExpiresAt = Date.parse(payload.expires_at);
           if (isNaN(parsedExpiresAt)) {
             // Parse failure - log and show error, don't treat as expired
             if (import.meta.env.DEV) {
               console.error("[CompareInvitePage] ❌ Failed to parse expires_at:", {
                 token: trimmedToken,
-                raw_expires_at: tokenRow.expires_at,
+                raw_expires_at: payload.expires_at,
                 parsedExpiresAt,
-                status: tokenRow.status,
+                status: payload.status,
                 RPC_error: null,
               });
             }
@@ -129,10 +118,10 @@ export default function CompareInvitePage() {
         if (import.meta.env.DEV) {
           console.log("[CompareInvitePage] 🔍 Token validation:", {
             token: trimmedToken.substring(0, 12) + "...",
-            raw_expires_at: tokenRow.expires_at,
+            raw_expires_at: payload.expires_at,
             parsedExpiresAtMs: expiresAtMs,
             nowMs,
-            status: tokenRow.status,
+            status: payload.status,
             computedExpired: isExpired,
             RPC_error: null,
           });
@@ -142,7 +131,7 @@ export default function CompareInvitePage() {
           if (import.meta.env.DEV) {
             console.log("[CompareInvitePage] Token expired:", {
               token: trimmedToken,
-              expires_at: tokenRow.expires_at,
+              expires_at: payload.expires_at,
               expiresAtMs,
               nowMs,
               now: new Date(nowMs).toISOString(),
@@ -153,31 +142,25 @@ export default function CompareInvitePage() {
           return;
         }
 
-        // Token is valid, continue with invite flow
-        console.log("[CompareInvitePage] Token is valid, continuing invite flow:", {
-          token: trimmedToken,
-          status: tokenRow.status,
-          compare_id: tokenRow.compare_id,
-          attempt_a_id: tokenRow.attempt_a_id,
-          attempt_b_id: tokenRow.attempt_b_id,
-        });
+        // Get inviter name from attempt_a (ALWAYS the inviter)
+        const attemptA = payload.attempt_a;
+        const inviterFirstName = attemptA?.first_name || null;
+        const inviterLastName = attemptA?.last_name || null;
+        const inviterNameParts = [inviterFirstName, inviterLastName].filter(Boolean);
+        const inviterDisplayName = inviterNameParts.length > 0 
+          ? inviterNameParts.join(" ").trim() 
+          : "یک نفر";
 
-        // Get inviter name from RPC (from attempts table via join)
-        // Single source of truth: attempts.user_first_name/last_name
-        const inviterDisplayName = nameData || '';
-        const inviterFirstName = (tokenRow as any).inviter_first_name || null;
-        const inviterLastName = (tokenRow as any).inviter_last_name || null;
-
-        // Construct session data from token row
+        // Construct session data from payload
         const sessionData: CompareSession = {
-          id: tokenRow.compare_id,
-          attemptAId: tokenRow.attempt_a_id,
-          attemptBId: tokenRow.attempt_b_id || null,
-          status: tokenRow.status === "completed" ? "completed" : "pending",
+          id: payload.session_id || payload.invite_token || trimmedToken,
+          attemptAId: payload.attempt_a_id || (attemptA ? "unknown" : null),
+          attemptBId: payload.attempt_b_id || null,
+          status: payload.status === "completed" ? "completed" : "pending",
           createdAt: new Date().toISOString(),
-          expiresAt: tokenRow.expires_at,
-          inviterFirstName: inviterFirstName, // From attempts table via join
-          inviterLastName: inviterLastName, // From attempts table via join
+          expiresAt: payload.expires_at,
+          inviterFirstName: inviterFirstName,
+          inviterLastName: inviterLastName,
         };
 
         // Store inviter display name for UI
@@ -189,19 +172,18 @@ export default function CompareInvitePage() {
           console.log("[CompareInvitePage] Session loaded:", {
             id: sessionData.id,
             status: sessionData.status,
-            attemptAId: sessionData.attemptAId?.substring(0, 8) + "...",
+            attemptAId: sessionData.attemptAId?.substring(0, 8) + "..." || "null",
             attemptBId: sessionData.attemptBId?.substring(0, 8) + "..." || "null",
             expiresAt: sessionData.expiresAt,
             inviterFirstName: sessionData.inviterFirstName,
             inviterLastName: sessionData.inviterLastName,
             inviterDisplayName: inviterDisplayName,
-            source: "attempts table (via join)",
-            nameError: nameError ? nameError.message : null,
+            source: "attempt_a from get_compare_payload_by_token",
           });
           
           // DEV warning if session valid but name missing
-          if (!inviterDisplayName && tokenRow.status === 'pending' && !isExpired) {
-            console.warn("[CompareInvitePage] ⚠️ Session valid but inviter name is empty");
+          if (!attemptA && payload.status === 'pending' && !isExpired) {
+            console.warn("[CompareInvitePage] ⚠️ Session valid but attempt_a is null");
           }
         }
 
@@ -250,6 +232,10 @@ export default function CompareInvitePage() {
 
   const handleIdentitySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!token) {
+      setError("Token not available");
+      return;
+    }
     setFormErrors({});
 
     const errors: { firstName?: string; phone?: string } = {};
@@ -346,29 +332,9 @@ export default function CompareInvitePage() {
     return null;
   }
 
-  // Compute inviter display name from RPC payload (attempts table via join)
-  // Single source of truth: backend payload, no localStorage/cache assumptions
-  const inviterName = (() => {
-    // Use inviterDisplayName from RPC if available
-    const displayName = (session as any).inviterDisplayName;
-    if (displayName && displayName.trim()) {
-      return displayName.trim();
-    }
-    
-    // Fallback to first/last name from session
-    const nameParts = [session.inviterFirstName, session.inviterLastName].filter(Boolean);
-    const fullName = nameParts.join(" ").trim();
-    
-    if (fullName) {
-      return fullName;
-    }
-    
-    // Final fallback: generic message (only if session is valid but name missing)
-    if (import.meta.env.DEV) {
-      console.warn("[CompareInvitePage] Using fallback 'یک نفر' - session valid but name missing");
-    }
-    return "یک نفر";
-  })();
+  // Compute inviter display name from session (built from attempt_a in loadSession)
+  // Single source of truth: attempt_a from get_compare_payload_by_token
+  const inviterName = (session as any).inviterDisplayName || "یک نفر";
 
   if (import.meta.env.DEV) {
     console.log("[CompareInvitePage] Computed inviter display name:", {

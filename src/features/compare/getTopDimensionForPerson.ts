@@ -1,6 +1,6 @@
 import type { CompareState } from "./buildCompareState";
 import type { DimensionKey } from "@/domain/quiz/types";
-import { DIMENSIONS } from "@/domain/quiz/dimensions";
+// import { DIMENSIONS } from "@/domain/quiz/dimensions"; // Unused
 
 /**
  * Gets the top dimension (highest score) for a person from CompareState.

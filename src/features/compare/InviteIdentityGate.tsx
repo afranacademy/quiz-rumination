@@ -15,7 +15,7 @@ interface InviteIdentityGateProps {
  * Identity gate for invited users - collects first name, last name (optional), and phone
  * before allowing them to start the quiz.
  */
-export function InviteIdentityGate({ open, inviterName, onSubmit, onClose }: InviteIdentityGateProps) {
+export function InviteIdentityGate({ open, inviterName, onSubmit, onClose: _onClose }: InviteIdentityGateProps) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");

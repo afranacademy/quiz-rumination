@@ -1,4 +1,4 @@
-import type { Attempt, DimensionKey } from "../quiz/types";
+import type { Attempt } from "../quiz/types";
 import type { Comparison } from "./types";
 import { DIMENSIONS, computeDimensionScores, levelOfDimension } from "../quiz/dimensions";
 

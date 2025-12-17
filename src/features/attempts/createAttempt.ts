@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabaseClient";
+import type { AttemptPayload, CreatedAttempt } from "./types";
 
 export type StartAttemptPayload = {
   quizId: string;
@@ -769,5 +770,46 @@ export async function markAttemptAbandoned(attemptId: string, lastQuestionIndex?
       console.error("[markAttemptAbandoned] Unexpected error (non-blocking):", err);
     }
     // Don't throw - this is best-effort
+  }
+}
+
+/**
+ * Creates a complete attempt with all data in one operation.
+ * This is a convenience function that combines startAttempt and completeAttempt.
+ */
+export async function createAttempt(payload: AttemptPayload): Promise<CreatedAttempt | null> {
+  try {
+    // Start the attempt
+    const attemptId = await startAttempt({
+      quizId: payload.quizId,
+      participantId: payload.userId,
+      userFirstName: payload.firstName,
+      userLastName: payload.lastName || null,
+      userPhone: payload.phone || null,
+      userAgent: navigator.userAgent,
+    });
+
+    // Update answers
+    await updateAttemptAnswers({
+      attemptId,
+      answers: payload.answers,
+      lastQuestionIndex: payload.answers.length - 1,
+    });
+
+    // Complete the attempt
+    const completed = await completeAttempt({
+      attemptId,
+      totalScore: payload.totalScore,
+      dimensionScores: payload.dimensionScores,
+      scoreBandId: payload.bandId,
+    });
+
+    return {
+      id: completed.id,
+      createdAt: completed.completed_at,
+    };
+  } catch (error) {
+    console.error("[createAttempt] Error:", error);
+    return null;
   }
 }

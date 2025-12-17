@@ -12,14 +12,14 @@ import {
   selectSafetyTemplate,
 } from "./selectCompareTemplates";
 import { renderTemplate } from "./renderTemplate";
-import { getCompareTemplate } from "./getCompareTemplate";
+// import { getCompareTemplate } from "./getCompareTemplate"; // Unused
 import { aggregateCompareInsights } from "./aggregateCompareInsights";
 
-const LEVEL_LABELS: Record<"low" | "medium" | "high", string> = {
-  low: "کم",
-  medium: "متوسط",
-  high: "زیاد",
-};
+// const LEVEL_LABELS: Record<"low" | "medium" | "high", string> = {
+//   low: "کم",
+//   medium: "متوسط",
+//   high: "زیاد",
+// }; // Unused
 
 export type CompareNarratives = {
   dominantDimension: DimensionKey;
@@ -139,7 +139,7 @@ export function getCompareNarratives(
   // 3. Key Differences (can be null for very_different)
   const keyDiffResult = selectKeyDifferencesTemplate(state);
   let keyDifferencesText: string | null = null;
-  let usedPhase7 = false;
+  // let _usedPhase7 = false; // Unused
   
   if (keyDiffResult) {
     // Phase 3 or Phase 7 template found
@@ -149,7 +149,7 @@ export function getCompareNarratives(
       keyDiffResult.template.section
     );
     // Check if it's Phase 7 (variance === "stable")
-    usedPhase7 = keyDiffResult.template.variance === "stable";
+    // _usedPhase7 = keyDiffResult.template.variance === "stable"; // Unused
   }
   // If null, caller should handle very_different case (no narrative paragraph, only bullet list)
 

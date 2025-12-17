@@ -1,4 +1,4 @@
-import type { LikertValue, LevelKey } from "../quiz/types";
+import type { LikertValue } from "../quiz/types";
 import { scoreAfranR14 } from "../quiz/scoring/scoreAfranR14";
 import { getLevel } from "../quiz/scoring/levelsAfranR14";
 

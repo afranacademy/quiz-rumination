@@ -1,4 +1,4 @@
-import { MIND_PATTERN_MAP, OptionValue, MindPatternEntry } from "./mindPatternMap";
+import { MIND_PATTERN_MAP, OptionValue } from "./mindPatternMap";
 
 export type MindPatternItem = {
   title: string;
