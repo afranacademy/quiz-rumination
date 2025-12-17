@@ -142,14 +142,38 @@ export default function CompareInvitePage() {
           return;
         }
 
-        // Get inviter name from attempt_a (ALWAYS the inviter)
+        // Get inviter name directly from payload.attempt_a
+        // RPC returns: { attempt_a: { first_name, last_name, id, ... }, ... }
         const attemptA = payload.attempt_a;
-        const inviterFirstName = attemptA?.first_name || null;
-        const inviterLastName = attemptA?.last_name || null;
+        
+        // Extract first_name and last_name from attempt_a object
+        // Check all possible field names the RPC might return
+        const rawFirstName = attemptA?.first_name ?? attemptA?.user_first_name ?? payload.a_user_first_name;
+        const rawLastName = attemptA?.last_name ?? attemptA?.user_last_name ?? payload.a_user_last_name;
+        
+        // Clean up empty strings
+        const inviterFirstName = (rawFirstName && typeof rawFirstName === 'string' && rawFirstName.trim()) 
+          ? rawFirstName.trim() 
+          : null;
+        const inviterLastName = (rawLastName && typeof rawLastName === 'string' && rawLastName.trim()) 
+          ? rawLastName.trim() 
+          : null;
+        
+        // Build display name from parts
         const inviterNameParts = [inviterFirstName, inviterLastName].filter(Boolean);
         const inviterDisplayName = inviterNameParts.length > 0 
           ? inviterNameParts.join(" ").trim() 
-          : "یک نفر";
+          : null; // null means fallback will be used in UI
+        
+        // Log payload.attempt_a and inviterName for debugging
+        console.log("[CompareInvitePage] 🏷️ Inviter name from RPC:", {
+          "payload.attempt_a": attemptA,
+          "attemptA.first_name": attemptA?.first_name,
+          "attemptA.last_name": attemptA?.last_name,
+          inviterFirstName,
+          inviterLastName,
+          inviterDisplayName: inviterDisplayName || "(fallback 'یک نفر' will be used)",
+        });
 
         // Construct session data from payload
         const sessionData: CompareSession = {
@@ -332,15 +356,22 @@ export default function CompareInvitePage() {
     return null;
   }
 
-  // Compute inviter display name from session (built from attempt_a in loadSession)
-  // Single source of truth: attempt_a from get_compare_payload_by_token
-  const inviterName = (session as any).inviterDisplayName || "یک نفر";
+  // Compute inviter display name from session (built from RPC response in loadSession)
+  // Priority: inviterDisplayName > inviterFirstName + inviterLastName > fallback
+  const storedDisplayName = (session as any).inviterDisplayName;
+  const inviterName = storedDisplayName && storedDisplayName.trim().length > 0
+    ? storedDisplayName
+    : (session.inviterFirstName || session.inviterLastName)
+      ? [session.inviterFirstName, session.inviterLastName].filter(Boolean).join(" ").trim()
+      : "یک نفر"; // Fallback only when no name is truly available
 
   if (import.meta.env.DEV) {
-    console.log("[CompareInvitePage] Computed inviter display name:", {
+    console.log("[CompareInvitePage] 🏷️ Final inviter display name:", {
+      storedDisplayName,
       inviterFirstName: session.inviterFirstName,
       inviterLastName: session.inviterLastName,
-      computedName: inviterName,
+      finalName: inviterName,
+      isFallback: inviterName === "یک نفر",
     });
   }
 

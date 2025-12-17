@@ -1557,6 +1557,16 @@ export default function CompareResultPage() {
   // Store function reference in ref for use in useEffect above (before early returns)
   loadCompareResultRef.current = loadCompareResult;
 
+  // Compute inviter display name for share text
+  // Priority: attemptA.user_first_name/user_last_name from state (already built from RPC)
+  const getInviterDisplayName = (): string => {
+    const firstName = attemptA?.user_first_name;
+    const lastName = attemptA?.user_last_name;
+    const parts = [firstName, lastName].filter((p) => p && typeof p === 'string' && p.trim().length > 0);
+    return parts.length > 0 ? parts.join(" ").trim() : "یک نفر";
+  };
+  const inviterDisplayName = getInviterDisplayName();
+
   if (loading && !session) {
     // #region agent log - Safety: Log state branch
     console.log("[CompareResultPage] 📊 State branch: LOADING (loading && !session)");
@@ -1893,7 +1903,7 @@ export default function CompareResultPage() {
                           try {
                             await navigator.share({
                               title: "دعوت به مقایسه‌ی ذهن‌ها",
-                              text: "یک نفر دوست داشته الگوی ذهنی شما و خودش رو کنار هم ببینه.",
+                              text: `${inviterDisplayName} دوست داشته الگوی ذهنی شما و خودش رو کنار هم ببینه.`,
                               url: `${window.location.origin}/compare/invite/${token}`,
                             });
                           } catch (error: any) {
@@ -3049,7 +3059,7 @@ export default function CompareResultPage() {
                       try {
                         await navigator.share({
                           title: "دعوت به مقایسه‌ی ذهن‌ها",
-                          text: "یک نفر دوست داشته الگوی ذهنی شما و خودش رو کنار هم ببینه.",
+                          text: `${inviterDisplayName} دوست داشته الگوی ذهنی شما و خودش رو کنار هم ببینه.`,
                           url: inviteData.url,
                         });
                       } catch (error: any) {
