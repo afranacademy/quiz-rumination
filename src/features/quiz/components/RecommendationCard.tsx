@@ -3,6 +3,7 @@ import { cn } from "@/app/components/ui/utils";
 import { Icon } from "./Icon";
 import type { LevelKey } from "../types";
 import { LINKS } from "@/config/links";
+import { trackCardEvent, CARD_TYPES, EVENT_TYPES } from "@/lib/trackCardEvent";
 
 interface RecommendationSectionProps {
   title: string;
@@ -12,6 +13,7 @@ interface RecommendationSectionProps {
   firstName: string | null;
   levelLabel: string;
   score: number;
+  attemptId?: string | null;
 }
 
 const reassuranceText: Record<LevelKey, string> = {
@@ -20,7 +22,7 @@ const reassuranceText: Record<LevelKey, string> = {
   high: "برای خروج تدریجی از چرخه‌ی نشخوار و بازسازی آرامش ذهن.",
 };
 
-export function RecommendationSection({ title: _title, paragraphs, ctas, level, firstName, levelLabel, score }: RecommendationSectionProps) {
+export function RecommendationSection({ title: _title, paragraphs, ctas, level, firstName, levelLabel, score, attemptId }: RecommendationSectionProps) {
 
   return (
     <div className="relative my-8 text-right">
@@ -90,6 +92,12 @@ export function RecommendationSection({ title: _title, paragraphs, ctas, level, 
                       "w-full rounded-2xl font-bold transition-all min-h-[48px] h-[52px] sm:h-[52px] bg-teal-600 hover:bg-white backdrop-blur-sm shadow-[0_0_0_2px_rgba(255,255,255,0.2),0_15px_40px_rgba(13,148,136,0.3)] border-2 border-teal-400/40 text-white hover:text-teal-700 hover:border-teal-600/60 text-sm sm:text-base"
                     )}
                     onClick={() => {
+                      // Track CTA click
+                      trackCardEvent({
+                        cardType: CARD_TYPES.CTA_MIND_VARAJ_COURSE,
+                        eventType: EVENT_TYPES.CLICK,
+                        attemptId: attemptId || null,
+                      });
                       window.open(link, "_blank");
                     }}
                   >

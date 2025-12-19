@@ -94,6 +94,7 @@ export function ResultPage({ score, level, firstName, onRetake, isPreviewMode = 
           firstName={firstName}
           levelLabel={getLevelLabel(level)}
           score={score}
+          attemptId={attemptId}
         />
 
         {/* Social Share Section */}

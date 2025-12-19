@@ -10,6 +10,7 @@ import { getLatestCompletedAttempt } from "@/features/compare/getLatestCompleted
 import { useAnonAuth } from "@/hooks/useAnonAuth";
 import { supabase } from "@/lib/supabaseClient";
 import { shareOrCopyText, copyText } from "@/features/share/shareClient";
+import { trackCardEvent, CARD_TYPES, EVENT_TYPES } from "@/lib/trackCardEvent";
 
 interface CompareInviteSectionProps {
   attemptId?: string | null;
@@ -450,7 +451,15 @@ export function CompareInviteSection({ attemptId: _attemptId }: CompareInviteSec
               نتیجه اصلی وقتی کامل می‌شه که دو نفر انجام بدن.
             </p>
             <Button
-              onClick={handleCreateInvite}
+              onClick={() => {
+                // Track compare minds CTA click
+                trackCardEvent({
+                  cardType: CARD_TYPES.CTA_COMPARE_MINDS,
+                  eventType: EVENT_TYPES.CLICK,
+                  attemptId: _attemptId || null,
+                });
+                handleCreateInvite();
+              }}
               disabled={inviteLoading || authLoading}
               className={`rounded-xl min-h-[56px] px-8 text-base sm:text-lg font-semibold bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600 border-blue-400/50 shadow-lg shadow-blue-500/30 transition-all duration-200 hover:scale-105 hover:shadow-xl hover:shadow-blue-500/40 active:scale-95 ${
                 !inviteLoading && !authLoading 

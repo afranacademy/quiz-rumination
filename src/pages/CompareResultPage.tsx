@@ -14,6 +14,7 @@ import {
 } from "@/utils/pdfGenerator";
 import { ComparePdfDocument } from "@/pdf/ComparePdfDocument";
 import { ComparePdfCompactDocument } from "@/pdf/templates/ComparePdfCompactDocument";
+import { trackCardEvent, CARD_TYPES, EVENT_TYPES } from "@/lib/trackCardEvent";
 import { computeSimilarity } from "@/features/compare/computeSimilarity";
 import { useAnonAuth } from "@/hooks/useAnonAuth";
 import { trackShareEvent } from "@/lib/trackShareEvent";
@@ -2231,6 +2232,14 @@ export default function CompareResultPage() {
       toast.error("خطا در تولید PDF: داده‌های کافی موجود نیست");
       return;
     }
+
+    // Track compare PDF download
+    trackCardEvent({
+      cardType: CARD_TYPES.PDF_COMPARE,
+      eventType: EVENT_TYPES.DOWNLOAD,
+      attemptId: attemptA?.id || null,
+      compareSessionId: session?.id || null,
+    });
 
     setIsGeneratingPdf(true);
     try {

@@ -18,6 +18,7 @@ import {
 } from "@/utils/pdfGenerator";
 import { ResultPdfDocument } from "@/pdf/ResultPdfDocument";
 import { toast } from "sonner";
+import { trackCardEvent, CARD_TYPES, EVENT_TYPES } from "@/lib/trackCardEvent";
 
 interface MindPatternCardProps {
   attemptId?: string | null;
@@ -194,6 +195,12 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
   };
 
   const handleDownloadPdf = async () => {
+    // Track PDF download
+    trackCardEvent({
+      cardType: CARD_TYPES.PDF_MY_MIND_PATTERN,
+      eventType: EVENT_TYPES.DOWNLOAD,
+      attemptId: attemptId || null,
+    });
     if (!answers) {
       toast.error("خطا در تولید PDF: اطلاعات کافی موجود نیست");
       return;
@@ -327,7 +334,15 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
         </CardHeader>
         <CardContent className="pt-0">
           <Button
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => {
+              // Track my mind pattern card CTA click
+              trackCardEvent({
+                cardType: CARD_TYPES.CTA_MY_MIND_PATTERN_CARD,
+                eventType: EVENT_TYPES.CLICK,
+                attemptId: attemptId || null,
+              });
+              setIsModalOpen(true);
+            }}
             className="w-full rounded-xl min-h-[48px] bg-primary/80 hover:bg-primary border-primary/40 text-base font-medium"
           >
             مشاهده کامل

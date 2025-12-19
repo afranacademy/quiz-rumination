@@ -11,6 +11,7 @@ import { computeTotalScore, normalizeAnswers } from "@/domain/quiz/scoring";
 import { computeDimensionScores } from "@/domain/quiz/dimensions";
 import type { LevelKey } from "@/features/quiz/types";
 import type { QuizIntake } from "@/features/quiz/types";
+import { getLatestCompletedAttempt } from "@/features/compare/getLatestCompletedAttempt";
 
 interface QuizResult {
   total: number;
@@ -54,8 +55,36 @@ export default function ResultPage() {
     const stored = localStorage.getItem("afran_attempt_id");
     if (stored) {
       setAttemptId(stored);
+      if (import.meta.env.DEV) {
+        console.log("[ResultPage] ✅ Loaded attemptId from localStorage:", stored.substring(0, 8) + "...");
+      }
+    } else if (userId) {
+      // Fallback: try to get latest completed attempt
+      if (import.meta.env.DEV) {
+        console.log("[ResultPage] ⚠️ attemptId not in localStorage, trying to fetch latest completed attempt...");
+      }
+      getLatestCompletedAttempt(userId).then((latestAttemptId) => {
+        if (latestAttemptId) {
+          setAttemptId(latestAttemptId);
+          if (import.meta.env.DEV) {
+            console.log("[ResultPage] ✅ Loaded attemptId from getLatestCompletedAttempt:", latestAttemptId.substring(0, 8) + "...");
+          }
+        } else {
+          if (import.meta.env.DEV) {
+            console.warn("[ResultPage] ⚠️ No attemptId found - tracking events will have null attempt_id");
+          }
+        }
+      }).catch((error) => {
+        if (import.meta.env.DEV) {
+          console.warn("[ResultPage] Error fetching latest attempt:", error);
+        }
+      });
+    } else {
+      if (import.meta.env.DEV) {
+        console.warn("[ResultPage] ⚠️ No attemptId and no userId - tracking events will have null attempt_id");
+      }
     }
-  }, [location.pathname]);
+  }, [location.pathname, userId]);
 
   // Finalize attempt if needed (only in production mode, not preview)
   useEffect(() => {

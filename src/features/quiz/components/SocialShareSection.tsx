@@ -11,6 +11,7 @@ import type { LevelKey } from "../types";
 import { CompareInviteSection } from "@/features/compare/components/CompareInviteSection";
 import { MindPatternCard } from "./MindPatternCard";
 import { buildInviteCta, CTA_URL, shareInvite, copyInvite } from "@/utils/inviteCta";
+import { trackCardEvent, CARD_TYPES, EVENT_TYPES } from "@/lib/trackCardEvent";
 
 interface SocialShareSectionProps {
   level: LevelKey;
@@ -194,12 +195,29 @@ export function SocialShareSection({
             emphasis="normal"
             primaryAction={{
               label: "اشتراک‌گذاری متنی",
-              onClick: () => setModalState({ type: "summary" }),
+              onClick: () => {
+                // Track personal result card CTA click
+                trackCardEvent({
+                  cardType: CARD_TYPES.CTA_PERSONAL_RESULT_CARD,
+                  eventType: EVENT_TYPES.CLICK,
+                  attemptId: attemptId || null,
+                });
+                setModalState({ type: "summary" });
+              },
             }}
             secondaryActions={[
               {
                 label: "دانلود PDF خلاصه",
-                onClick: handleSummaryPdf,
+                onClick: () => {
+                  // Track PDF download (note: this is summary PDF, not mind pattern PDF)
+                  // We'll track it as personal result card PDF for now
+                  trackCardEvent({
+                    cardType: CARD_TYPES.CTA_PERSONAL_RESULT_CARD,
+                    eventType: EVENT_TYPES.DOWNLOAD,
+                    attemptId: attemptId || null,
+                  });
+                  handleSummaryPdf();
+                },
               },
             ]}
           />

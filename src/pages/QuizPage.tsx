@@ -503,6 +503,13 @@ export default function QuizPage() {
         scoreBandId,
       });
       
+      // Store attemptId in standard location for ResultPage to read
+      localStorage.setItem("afran_attempt_id", currentAttemptId);
+      
+      if (import.meta.env.DEV && requestId) {
+        console.log(`[QuizPage] [${requestId}] Stored attemptId to afran_attempt_id:`, currentAttemptId.substring(0, 8) + "...");
+      }
+      
       console.log("[SUBMIT] success");
       
       if (import.meta.env.DEV && requestId) {
