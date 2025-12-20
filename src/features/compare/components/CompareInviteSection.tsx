@@ -31,6 +31,9 @@ export function CompareInviteSection({ attemptId: _attemptId }: CompareInviteSec
   const [inviteLoading, setInviteLoading] = useState(false);
   const [creatingNewLink, setCreatingNewLink] = useState(false);
   const [currentAttemptAId, setCurrentAttemptAId] = useState<string | null>(null);
+  const [comparisonStatusLoading, setComparisonStatusLoading] = useState(false);
+  const [comparisonPayload, setComparisonPayload] = useState<any | null>(null);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
 
   // Single source of truth for invite URL
   const inviteUrl = inviteToken 
@@ -430,6 +433,60 @@ export function CompareInviteSection({ attemptId: _attemptId }: CompareInviteSec
     }
   };
 
+  const handleViewComparisonStatus = async () => {
+    if (!inviteToken) return;
+
+    setComparisonStatusLoading(true);
+    setComparisonPayload(null);
+    setComparisonError(null);
+
+    try {
+      const trimmedToken = inviteToken.trim();
+      
+      const { data: rpcData, error: rpcError } = await supabase.rpc(
+        "get_compare_payload_by_token",
+        { p_invite_token: trimmedToken }
+      );
+
+      if (rpcError) {
+        if (import.meta.env.DEV) {
+          console.error("[CompareInviteSection] ❌ RPC Error:", rpcError);
+        }
+        setComparisonError("خطا در دریافت وضعیت مقایسه.");
+        setComparisonStatusLoading(false);
+        return;
+      }
+
+      if (!rpcData || (Array.isArray(rpcData) && rpcData.length === 0)) {
+        setComparisonError("لینک نامعتبر است");
+        setComparisonStatusLoading(false);
+        return;
+      }
+
+      const payload = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+
+      // Check expiry
+      if (payload.expires_at) {
+        const expiresAt = new Date(payload.expires_at);
+        const now = new Date();
+        if (now > expiresAt) {
+          setComparisonError("لینک دعوت منقضی شده است.");
+          setComparisonStatusLoading(false);
+          return;
+        }
+      }
+
+      setComparisonPayload(payload);
+      setComparisonStatusLoading(false);
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.error("[CompareInviteSection] ❌ Error fetching comparison status:", error);
+      }
+      setComparisonError("خطا در دریافت وضعیت مقایسه.");
+      setComparisonStatusLoading(false);
+    }
+  };
+
   return (
     <>
       {/* Hero Section - Compare Invite */}
@@ -482,6 +539,9 @@ export function CompareInviteSection({ attemptId: _attemptId }: CompareInviteSec
         onClose={() => {
           setModalState({ type: null });
           setShareStatus({ type: null, message: null });
+          setComparisonStatusLoading(false);
+          setComparisonPayload(null);
+          setComparisonError(null);
         }}
       >
         <div className="space-y-4">
@@ -600,15 +660,61 @@ export function CompareInviteSection({ attemptId: _attemptId }: CompareInviteSec
                   {/* View Comparison Status Button */}
                   {inviteToken && (
                     <Button
-                      onClick={() => {
-                        navigate(`/compare/invite/${inviteToken}`);
-                        setModalState({ type: null });
-                      }}
+                      onClick={handleViewComparisonStatus}
+                      disabled={comparisonStatusLoading}
                       variant="outline"
                       className="w-full rounded-xl min-h-[44px] bg-white/10 border-white/20"
                     >
-                      دیدن وضعیت مقایسه
+                      {comparisonStatusLoading ? "در حال بررسی..." : "دیدن وضعیت مقایسه"}
                     </Button>
+                  )}
+
+                  {/* Comparison Status Loading */}
+                  {comparisonStatusLoading && (
+                    <div className="p-4 rounded-2xl bg-white/10 border border-white/20 text-center">
+                      <p className="text-sm text-foreground/80">در حال بررسی وضعیت...</p>
+                    </div>
+                  )}
+
+                  {/* Comparison Status Error */}
+                  {comparisonError && (
+                    <div className="p-4 rounded-2xl bg-red-500/20 border border-red-500/30 text-center">
+                      <p className="text-sm text-red-400">{comparisonError}</p>
+                    </div>
+                  )}
+
+                  {/* Comparison Status: Pending */}
+                  {comparisonPayload && (comparisonPayload.status === "pending" || !comparisonPayload.attempt_b_id) && (
+                    <div className="p-4 rounded-2xl bg-primary/20 border border-primary/30 text-center space-y-2">
+                      <p className="text-sm text-primary font-medium">
+                        منتظر تکمیل آزمون توسط نفر دوم…
+                      </p>
+                      {comparisonPayload.expires_at && (
+                        <p className="text-xs text-primary/70">
+                          مهلت لینک تا: {new Date(comparisonPayload.expires_at).toLocaleDateString("fa-IR")}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Comparison Status: Completed - Show comparison card */}
+                  {comparisonPayload && comparisonPayload.status === "completed" && comparisonPayload.attempt_b_id && (
+                    <div className="mt-4 space-y-4">
+                      <div className="p-4 rounded-2xl bg-primary/20 border border-primary/30 text-center">
+                        <p className="text-sm text-primary font-medium mb-2">
+                          مقایسه کامل شده است!
+                        </p>
+                        <Button
+                          onClick={() => {
+                            navigate(`/compare/result/${inviteToken}`);
+                            setModalState({ type: null });
+                          }}
+                          className="w-full rounded-xl min-h-[44px] bg-primary/80 hover:bg-primary border-primary/40"
+                        >
+                          مشاهده کارت مقایسه کامل
+                        </Button>
+                      </div>
+                    </div>
                   )}
 
                   {/* Create New Link Button */}
