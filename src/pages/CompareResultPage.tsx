@@ -130,6 +130,15 @@ const LEVEL_LABELS: Record<"low" | "medium" | "high", string> = {
   high: "زیاد",
 };
 
+/**
+ * Converts a number to Persian digits
+ */
+function formatPersianNumber(num: number | null | undefined): string {
+  if (num === null || num === undefined) return "";
+  const persianDigits = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
+  return num.toString().replace(/\d/g, (d) => persianDigits[parseInt(d, 10)]);
+}
+
 
 /**
  * Safely parses dimension_scores from various formats (string, object, null).
@@ -1837,7 +1846,14 @@ export default function CompareResultPage() {
               برای فهم بهتر تفاوت‌ها، نه قضاوت
             </p>
             <div className="flex items-center justify-center gap-2 text-base text-foreground/80 mt-4">
-              <span>{nameA}</span>
+              <div className="flex flex-col items-center">
+                <span>{nameA}</span>
+                {attemptA?.total_score !== null && attemptA?.total_score !== undefined && (
+                  <span className="text-xs text-foreground/60 mt-1">
+                    امتیاز: {formatPersianNumber(attemptA.total_score)}
+                  </span>
+                )}
+              </div>
               <span className="text-foreground/50">×</span>
               <span>نفر مقابل</span>
             </div>
@@ -2384,9 +2400,23 @@ export default function CompareResultPage() {
             برای فهم بهتر تفاوت‌ها، نه قضاوت
           </p>
           <div className="flex items-center justify-center gap-2 text-base text-foreground/80 mt-4">
-            <span>{nameA}</span>
+            <div className="flex flex-col items-center">
+              <span>{nameA}</span>
+              {attemptA?.total_score !== null && attemptA?.total_score !== undefined && (
+                <span className="text-xs text-foreground/60 mt-1">
+                  امتیاز: {formatPersianNumber(attemptA.total_score)}
+                </span>
+              )}
+            </div>
             <span className="text-foreground/50">×</span>
-            <span>{nameB}</span>
+            <div className="flex flex-col items-center">
+              <span>{nameB}</span>
+              {attemptB?.total_score !== null && attemptB?.total_score !== undefined && (
+                <span className="text-xs text-foreground/60 mt-1">
+                  امتیاز: {formatPersianNumber(attemptB.total_score)}
+                </span>
+              )}
+            </div>
           </div>
           <p className="text-xs text-foreground/60 mt-2">
             ترجمه‌ی تفاوت‌های ذهنی به زبان رابطه
