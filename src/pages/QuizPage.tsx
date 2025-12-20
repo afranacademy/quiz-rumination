@@ -360,42 +360,180 @@ export default function QuizPage() {
     // This token is ONLY set in /compare/invite/:token route
     const liveCompareToken = getInviteTokenSafe(currentSearchParams);
 
-    // Validate attemptId exists - if missing, try to recover
+    // Declare variables for recovered values (will be used if recovery happens)
+    let recoveredAttemptId: string | null = null;
+    let recoveredUserId: string | null = null;
+    let recoveredQuizId: string | null = null;
+    
+    // Validate attemptId exists - if missing, try to recover with production-safe fallback
     if (!attemptId || !userId || !quizId) {
       const errorMsg = "[QuizPage] CRITICAL: Missing attempt ID, user ID, or quiz ID";
       console.error(errorMsg, { attemptId, userId, quizId });
       
-      // Try to recover: reload attempt if missing
-      if (!attemptId && userId && quizId) {
-        if (import.meta.env.DEV && requestId) {
-          console.log(`[QuizPage] [${requestId}] Attempting to recover missing attemptId...`);
+      if (import.meta.env.DEV && requestId) {
+        console.log(`[QuizPage] [${requestId}] Attempting production-safe recovery...`);
+      }
+      
+      try {
+        // Step 1: Recover userId if missing (from auth session)
+        recoveredUserId = userId;
+        if (!recoveredUserId) {
+          if (import.meta.env.DEV && requestId) {
+            console.log(`[QuizPage] [${requestId}] Recovering userId from auth...`);
+          }
+          const { data: { user }, error: userError } = await supabase.auth.getUser();
+          if (userError || !user) {
+            // Try getSession as fallback
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session?.user) {
+              recoveredUserId = session.user.id;
+              if (import.meta.env.DEV && requestId) {
+                console.log(`[QuizPage] [${requestId}] Recovered userId from session:`, recoveredUserId.substring(0, 8) + "...");
+              }
+            } else {
+              throw new Error(`Failed to recover userId: ${userError?.message || "No user in session"}`);
+            }
+          } else {
+            recoveredUserId = user.id;
+            if (import.meta.env.DEV && requestId) {
+              console.log(`[QuizPage] [${requestId}] Recovered userId from getUser:`, recoveredUserId.substring(0, 8) + "...");
+            }
+          }
         }
-        try {
-          const currentQuizId = await getQuizId();
-          const storageKey = getAttemptStorageKey(currentQuizId, userId, liveCompareToken);
+        
+        // Step 2: Recover quizId if missing
+        recoveredQuizId = quizId;
+        if (!recoveredQuizId) {
+          if (import.meta.env.DEV && requestId) {
+            console.log(`[QuizPage] [${requestId}] Recovering quizId...`);
+          }
+          recoveredQuizId = await getQuizId();
+          if (import.meta.env.DEV && requestId) {
+            console.log(`[QuizPage] [${requestId}] Recovered quizId:`, recoveredQuizId);
+          }
+        }
+        
+        // Step 3: Recover attemptId if missing
+        recoveredAttemptId = attemptId;
+        if (!recoveredAttemptId && recoveredUserId && recoveredQuizId) {
+          if (import.meta.env.DEV && requestId) {
+            console.log(`[QuizPage] [${requestId}] Recovering attemptId...`);
+          }
+          
+          // 3a: Try localStorage first (with correct storage key)
+          const storageKey = getAttemptStorageKey(recoveredQuizId, recoveredUserId, liveCompareToken);
           const storedAttemptId = localStorage.getItem(storageKey);
           if (storedAttemptId) {
             const { data: attempt } = await supabase
               .from("attempts")
-              .select("id, status")
+              .select("id, status, participant_id, quiz_id")
               .eq("id", storedAttemptId)
-              .eq("participant_id", userId)
+              .eq("participant_id", recoveredUserId)
+              .eq("quiz_id", recoveredQuizId)
               .maybeSingle();
             if (attempt && attempt.status !== "completed") {
-              setAttemptId(attempt.id);
+              recoveredAttemptId = attempt.id;
               if (import.meta.env.DEV && requestId) {
-                console.log(`[QuizPage] [${requestId}] Recovered attemptId:`, attempt.id.substring(0, 8) + "...");
+                console.log(`[QuizPage] [${requestId}] Recovered attemptId from localStorage:`, recoveredAttemptId.substring(0, 8) + "...");
               }
-              // Retry completion after recovery
-              setTimeout(() => handleComplete(quizAnswers), 100);
-              return;
             }
           }
-        } catch (recoverError) {
-          if (import.meta.env.DEV && requestId) {
-            console.error(`[QuizPage] [${requestId}] Failed to recover attemptId:`, recoverError);
+          
+          // 3b: If still missing, query for most recent in_progress attempt
+          if (!recoveredAttemptId) {
+            if (import.meta.env.DEV && requestId) {
+              console.log(`[QuizPage] [${requestId}] Querying for in_progress attempt...`);
+            }
+            const { data: existingAttempts, error: queryError } = await supabase
+              .from("attempts")
+              .select("id, status, started_at")
+              .eq("participant_id", recoveredUserId)
+              .eq("quiz_id", recoveredQuizId)
+              .in("status", ["started", "in_progress"])
+              .order("started_at", { ascending: false })
+              .limit(1);
+            
+            if (!queryError && existingAttempts && existingAttempts.length > 0) {
+              const existingAttempt = existingAttempts[0];
+              if (existingAttempt.status !== "completed") {
+                recoveredAttemptId = existingAttempt.id;
+                // Store in localStorage for future use
+                localStorage.setItem(storageKey, recoveredAttemptId);
+                if (import.meta.env.DEV && requestId) {
+                  console.log(`[QuizPage] [${requestId}] Recovered attemptId from database:`, recoveredAttemptId.substring(0, 8) + "...");
+                }
+              }
+            }
+          }
+          
+          // 3c: If still missing, create a new attempt (last resort)
+          if (!recoveredAttemptId) {
+            if (import.meta.env.DEV && requestId) {
+              console.log(`[QuizPage] [${requestId}] Creating new attempt as last resort...`);
+            }
+            
+            // Get intake data if available
+            let firstName = "کاربر";
+            let lastName: string | null = null;
+            let phone: string | null = null;
+            const intakeData = sessionStorage.getItem("quiz_intake_v1");
+            if (intakeData) {
+              try {
+                const intake = JSON.parse(intakeData);
+                firstName = intake.firstName || firstName;
+                lastName = intake.lastName || null;
+                phone = intake.mobile || null;
+              } catch (e) {
+                if (import.meta.env.DEV) {
+                  console.warn("[QuizPage] Failed to parse intake data:", e);
+                }
+              }
+            }
+            
+            recoveredAttemptId = await startAttempt({
+              quizId: recoveredQuizId,
+              participantId: recoveredUserId,
+              userFirstName: firstName,
+              userLastName: lastName,
+              userPhone: phone,
+              userAgent: navigator.userAgent,
+            });
+            
+            // Store in localStorage
+            localStorage.setItem(storageKey, recoveredAttemptId);
+            if (import.meta.env.DEV && requestId) {
+              console.log(`[QuizPage] [${requestId}] Created and stored new attemptId:`, recoveredAttemptId.substring(0, 8) + "...");
+            }
           }
         }
+        
+        // Step 4: Validate all recovered values are present
+        if (!recoveredAttemptId || !recoveredUserId || !recoveredQuizId) {
+          throw new Error("Failed to recover all required values");
+        }
+        
+        // Step 5: Update state with recovered values for future use
+        if (import.meta.env.DEV && requestId) {
+          console.log(`[QuizPage] [${requestId}] Recovery successful, updating state and continuing...`);
+        }
+        
+        if (recoveredQuizId && recoveredQuizId !== quizId) {
+          setQuizId(recoveredQuizId);
+        }
+        if (recoveredAttemptId && recoveredAttemptId !== attemptId) {
+          setAttemptId(recoveredAttemptId);
+        }
+        
+        // Step 6: Recovery successful - values stored in recovered* variables above
+        // Will be used below after the catch block
+        if (import.meta.env.DEV && requestId) {
+          console.log(`[QuizPage] [${requestId}] Recovery successful, values ready for use`);
+        }
+      } catch (recoverError) {
+        if (import.meta.env.DEV && requestId) {
+          console.error(`[QuizPage] [${requestId}] Recovery failed:`, recoverError);
+        }
+        console.error("[QuizPage] Production recovery failed:", recoverError);
       }
       
       if (import.meta.env.DEV && requestId) {
@@ -408,7 +546,32 @@ export default function QuizPage() {
       return;
     }
 
-    const currentAttemptId = attemptId;
+    // Use recovered values if available (from recovery above), otherwise use state
+    const currentAttemptId = recoveredAttemptId || attemptId;
+    const currentUserId = recoveredUserId || userId;
+    const currentQuizId = recoveredQuizId || quizId;
+    
+    // Final validation with recovered/state values
+    if (!currentAttemptId || !currentUserId || !currentQuizId) {
+      const errorMsg = "[QuizPage] CRITICAL: Missing attempt ID, user ID, or quiz ID after recovery";
+      console.error(errorMsg, { currentAttemptId, currentUserId, currentQuizId });
+      if (import.meta.env.DEV && requestId) {
+        alert(`DEV ERROR: ${errorMsg}. Cannot complete attempt.`);
+      }
+      isCompletingRef.current = false;
+      setIsSubmitting(false);
+      setLastOperationError("خطا: اطلاعات آزمون یافت نشد. لطفاً دوباره تلاش کنید.");
+      return;
+    }
+    
+    if (import.meta.env.DEV && requestId) {
+      console.log(`[QuizPage] [${requestId}] Using values for completion:`, {
+        attemptId: currentAttemptId.substring(0, 8) + "...",
+        userId: currentUserId.substring(0, 8) + "...",
+        quizId: currentQuizId,
+        wasRecovered: !!(recoveredAttemptId || recoveredUserId || recoveredQuizId),
+      });
+    }
 
     if (import.meta.env.DEV && requestId) {
       console.log(`[QuizPage] [${requestId}] 🔍 Live token check (top-level):`, {
