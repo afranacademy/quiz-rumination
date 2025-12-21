@@ -16,7 +16,7 @@ export async function trackEvent(payload: {
   attempt_id: string | null;
   event_type: "open" | "view_card" | "click_cta" | "copy_text" | "share" | "download_pdf";
   card_type?: string;
-  source_page?: "result" | "compare";
+  source_page: "quiz" | "result" | "compare"; // Required, never null
   source_card?: string;
   metadata?: Record<string, any>;
 }): Promise<void> {
@@ -29,12 +29,18 @@ export async function trackEvent(payload: {
     return;
   }
 
+  // Ensure source_page is never null
+  if (!payload.source_page) {
+    console.error("[track_failed] source_page is required", payload);
+    return;
+  }
+
   try {
     const { error } = await supabase.rpc("rpc_track_event", {
       p_attempt_id: payload.attempt_id,
       p_event_type: payload.event_type,
       p_card_type: payload.card_type || null,
-      p_source_page: payload.source_page || null,
+      p_source_page: payload.source_page, // Never null
       p_source_card: payload.source_card || null,
       p_metadata: payload.metadata || null,
     });
@@ -60,7 +66,7 @@ export async function submitAnswer(
   }
 
   if (!attemptId) {
-    console.error("[attempt_id_missing]");
+    console.error("[attempt_id_missing]", { questionIndex });
     return;
   }
 
@@ -99,14 +105,14 @@ export async function completeAttemptRpc(attemptId: string | null | undefined): 
     });
 
     if (error) {
-      console.error("[complete_attempt_failed]", { attemptId, error });
+      console.log("[complete_attempt_result]", { data: null, error });
       return null;
     }
 
-    console.log("[complete_attempt_result]", data);
+    console.log("[complete_attempt_result]", { data, error: null });
     return data;
   } catch (err) {
-    console.error("[complete_attempt_failed]", { attemptId, error: err });
+    console.log("[complete_attempt_result]", { data: null, error: err });
     return null;
   }
 }
@@ -131,24 +137,31 @@ export async function printDevProof(attemptId: string): Promise<void> {
     // Get attempt data
     const { data: attemptData, error: attemptError } = await supabase
       .from("attempts")
-      .select("id, total_score, mental_pattern")
+      .select("id, score, mental_pattern")
       .eq("id", attemptId)
       .maybeSingle();
 
-    // Get last events
+    // Get last events (use canonical view if available, otherwise direct table)
     const { data: eventsData, error: eventsError } = await supabase
-      .from("card_events")
-      .select("event_type, created_at")
+      .from("card_events_canonical")
+      .select("event_type, source_page, created_at")
       .eq("attempt_id", attemptId)
       .order("created_at", { ascending: false })
       .limit(10);
 
-    console.group(`[DEV PROOF] Attempt ${attemptId.substring(0, 8)}...`);
+    console.group("[DEV PROOF]");
     console.log("attemptId:", attemptId);
-    console.log("attempt_answers count:", answersCount);
-    console.log("attempts.total_score:", attemptData?.total_score ?? "NULL");
-    console.log("attempts.mental_pattern:", attemptData?.mental_pattern ?? "NULL");
-    console.log("last events:", eventsData || []);
+    console.log("answers_count:", answersCount);
+    console.log("score:", attemptData?.score ?? null);
+    console.log("mental_pattern:", attemptData?.mental_pattern ?? null);
+    console.log("events:");
+    if (eventsData && eventsData.length > 0) {
+      eventsData.forEach((event: any) => {
+        console.log(`  - ${event.event_type}${event.source_page ? ` / ${event.source_page}` : ""}`);
+      });
+    } else {
+      console.log("  (no events found)");
+    }
     if (answersError) console.error("answers query error:", answersError);
     if (attemptError) console.error("attempt query error:", attemptError);
     if (eventsError) console.error("events query error:", eventsError);
