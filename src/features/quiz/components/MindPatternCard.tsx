@@ -19,6 +19,7 @@ import {
 import { ResultPdfDocument } from "@/pdf/ResultPdfDocument";
 import { toast } from "sonner";
 import { trackCardEvent, CARD_TYPES, EVENT_TYPES } from "@/lib/trackCardEvent";
+import { trackEvent } from "@/lib/behaviorTracking";
 
 interface MindPatternCardProps {
   attemptId?: string | null;
@@ -110,6 +111,17 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
 
         // Store answers for share/PDF functionality
         setAnswers(answers);
+        
+        // Track card view
+        if (attemptId) {
+          trackEvent({
+            attempt_id: attemptId,
+            event_type: "view_card",
+            card_type: "mind_pattern_card",
+            source_page: "result",
+            source_card: "mind_pattern_card",
+          });
+        }
       } catch (error) {
         if (import.meta.env.DEV) {
           console.error("[MindPatternCard] Failed to build mind pattern:", error);
@@ -151,6 +163,17 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
     if (!answers) {
       toast.error("اطلاعات کافی برای اشتراک‌گذاری موجود نیست");
       return;
+    }
+
+    // Track share event
+    if (attemptId) {
+      trackEvent({
+        attempt_id: attemptId,
+        event_type: "share",
+        card_type: "mind_pattern_card",
+        source_page: "result",
+        source_card: "mind_pattern_card",
+      });
     }
 
     setIsSharing(true);
@@ -201,6 +224,18 @@ export function MindPatternCard({ attemptId, firstName }: MindPatternCardProps) 
       eventType: EVENT_TYPES.DOWNLOAD,
       attemptId: attemptId || null,
     });
+    
+    // Also track with new system
+    if (attemptId) {
+      trackEvent({
+        attempt_id: attemptId,
+        event_type: "download_pdf",
+        card_type: "mind_pattern_card",
+        source_page: "result",
+        source_card: "mind_pattern_card",
+      });
+    }
+    
     if (!answers) {
       toast.error("خطا در تولید PDF: اطلاعات کافی موجود نیست");
       return;

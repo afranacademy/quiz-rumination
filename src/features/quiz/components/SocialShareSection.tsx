@@ -12,6 +12,7 @@ import { CompareInviteSection } from "@/features/compare/components/CompareInvit
 import { MindPatternCard } from "./MindPatternCard";
 import { buildInviteCta, CTA_URL, shareInvite, copyInvite } from "@/utils/inviteCta";
 import { trackCardEvent, CARD_TYPES, EVENT_TYPES } from "@/lib/trackCardEvent";
+import { trackEvent } from "@/lib/behaviorTracking";
 
 interface SocialShareSectionProps {
   level: LevelKey;
@@ -48,6 +49,17 @@ export function SocialShareSection({
 
   const handleShare = async () => {
     const contentText = `${summaryRange.text}\n\nامتیاز: ${score} از ${maxScore}`;
+    
+    // Track share event
+    if (attemptId) {
+      trackEvent({
+        attempt_id: attemptId,
+        event_type: "share",
+        card_type: "personal_result_card",
+        source_page: "result",
+        source_card: "personal_result_card",
+      });
+    }
     
     const result = await shareInvite({
       title: quizTitle,
@@ -87,6 +99,18 @@ export function SocialShareSection({
 
   const handleCopy = async () => {
     const contentText = `${summaryRange.text}\n\nامتیاز: ${score} از ${maxScore}`;
+    
+    // Track copy event
+    if (attemptId) {
+      trackEvent({
+        attempt_id: attemptId,
+        event_type: "copy_text",
+        card_type: "personal_result_card",
+        source_page: "result",
+        source_card: "personal_result_card",
+      });
+    }
+    
     const success = await copyInvite({ contentText });
     if (success) {
       setShareStatus({ type: "copy", message: "کپی شد" });
@@ -98,6 +122,17 @@ export function SocialShareSection({
 
   const handleSummaryPdf = async () => {
     try {
+      // Track PDF download event
+      if (attemptId) {
+        trackEvent({
+          attempt_id: attemptId,
+          event_type: "download_pdf",
+          card_type: "personal_result_card",
+          source_page: "result",
+          source_card: "personal_result_card",
+        });
+      }
+      
       // First, copy the text for personal use
       const contentText = `${summaryRange.text}\n\nامتیاز: ${score} از ${maxScore}`;
       const copySuccess = await copyInvite({ contentText });
@@ -202,6 +237,16 @@ export function SocialShareSection({
                   eventType: EVENT_TYPES.CLICK,
                   attemptId: attemptId || null,
                 });
+                // Also track with new system
+                if (attemptId) {
+                  trackEvent({
+                    attempt_id: attemptId,
+                    event_type: "click_cta",
+                    card_type: "personal_result_card",
+                    source_page: "result",
+                    source_card: "personal_result_card",
+                  });
+                }
                 setModalState({ type: "summary" });
               },
             }}
@@ -253,7 +298,19 @@ export function SocialShareSection({
             <Button
               variant="link"
               className="text-primary hover:underline cursor-pointer text-base font-medium p-0 h-auto"
-              onClick={() => window.open(CTA_URL, '_blank')}
+              onClick={() => {
+                // Track course CTA click
+                if (attemptId) {
+                  trackEvent({
+                    attempt_id: attemptId,
+                    event_type: "click_cta",
+                    card_type: "cta_mind_varaj_course",
+                    source_page: "result",
+                    source_card: "personal_result_card",
+                  });
+                }
+                window.open(CTA_URL, '_blank');
+              }}
             >
               {buildInviteCta()}
             </Button>

@@ -45,6 +45,7 @@ import { normalizeDisplayName } from "@/features/compare/normalizeDisplayName";
 import { generatePerPersonProfile } from "@/features/compare/generatePerPersonProfile";
 import { buildCompareShareText, type RenderedCompareText } from "@/features/compare/export/compareTextExport";
 import { useMemo } from "react";
+import { trackEvent } from "@/lib/behaviorTracking";
 
 type CompareSession = {
   id: string;
@@ -2129,6 +2130,17 @@ export default function CompareResultPage() {
   // Share handlers
   const handleCopyLink = async () => {
     try {
+      // Track copy event
+      if (attemptA?.id) {
+        trackEvent({
+          attempt_id: attemptA.id,
+          event_type: "copy_text",
+          card_type: "compare_minds_card",
+          source_page: "compare",
+          source_card: "compare_minds_card",
+        });
+      }
+      
       const currentUrl = window.location.href;
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(currentUrl);
@@ -2176,6 +2188,17 @@ export default function CompareResultPage() {
       return;
     }
 
+    // Track share event
+    if (attemptA?.id) {
+      trackEvent({
+        attempt_id: attemptA.id,
+        event_type: "share",
+        card_type: "compare_minds_card",
+        source_page: "compare",
+        source_card: "compare_minds_card",
+      });
+    }
+
     try {
       const contentText = buildCompareShareText(compareState, renderedCompareText);
       // Note: buildCompareShareText already includes test invite at the end, so we pass it without shareInvite wrapper
@@ -2213,6 +2236,17 @@ export default function CompareResultPage() {
     if (!compareState || !renderedCompareText) {
       toast.error("اطلاعات کافی برای کپی موجود نیست");
       return;
+    }
+
+    // Track copy event
+    if (attemptA?.id) {
+      trackEvent({
+        attempt_id: attemptA.id,
+        event_type: "copy_text",
+        card_type: "compare_minds_card",
+        source_page: "compare",
+        source_card: "compare_minds_card",
+      });
     }
 
     try {
@@ -2256,6 +2290,17 @@ export default function CompareResultPage() {
       attemptId: attemptA?.id || null,
       compareSessionId: session?.id || null,
     });
+
+    // Also track with new system
+    if (attemptA?.id) {
+      trackEvent({
+        attempt_id: attemptA.id,
+        event_type: "download_pdf",
+        card_type: "compare_minds_card",
+        source_page: "compare",
+        source_card: "compare_minds_card",
+      });
+    }
 
     setIsGeneratingPdf(true);
     try {
@@ -2360,6 +2405,27 @@ export default function CompareResultPage() {
 
   // Course URL - from single source of truth
   const COURSE_URL = COURSE_LINK;
+
+  // Track page open and card view events
+  useEffect(() => {
+    if (attemptA?.id && session && session.status === "completed") {
+      // Track page open
+      trackEvent({
+        attempt_id: attemptA.id,
+        event_type: "open",
+        source_page: "compare",
+      });
+      
+      // Track card view
+      trackEvent({
+        attempt_id: attemptA.id,
+        event_type: "view_card",
+        card_type: "compare_minds_card",
+        source_page: "compare",
+        source_card: "compare_minds_card",
+      });
+    }
+  }, [attemptA?.id, session]);
 
   // #region agent log - Safety: Log state branch
   if (import.meta.env.DEV) {
@@ -2689,7 +2755,19 @@ export default function CompareResultPage() {
             {/* Enhanced Action Button */}
             <div className="flex justify-center pt-2">
               <Button
-                onClick={() => window.open(COURSE_URL, "_blank")}
+                onClick={() => {
+                  // Track course CTA click from compare page
+                  if (attemptA?.id) {
+                    trackEvent({
+                      attempt_id: attemptA.id,
+                      event_type: "click_cta",
+                      card_type: "cta_mind_varaj_course",
+                      source_page: "compare",
+                      source_card: "compare_minds_card",
+                    });
+                  }
+                  window.open(COURSE_URL, "_blank");
+                }}
                 className="w-full sm:w-auto rounded-xl min-h-[60px] px-10 text-lg font-bold bg-green-500 hover:bg-green-400 border-2 border-green-400/50 shadow-xl shadow-green-500/30 transition-all hover:scale-105"
                 size="lg"
               >

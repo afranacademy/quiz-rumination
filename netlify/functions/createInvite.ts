@@ -6,13 +6,13 @@ import { Handler } from "@netlify/functions";
  * This function is kept for backward compatibility but returns an error.
  */
 export const handler: Handler = async (event) => {
-  return {
+    return {
     statusCode: 410, // Gone - indicates the resource is no longer available
-    body: JSON.stringify({ 
+      body: JSON.stringify({
       error: "This endpoint is deprecated. Please use Supabase RPC create_compare_invite instead.",
       deprecated: true
-    }),
-  };
+      }),
+    };
 };
 
 /* LEGACY CODE - DISABLED

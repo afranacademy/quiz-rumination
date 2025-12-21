@@ -12,6 +12,7 @@ import { computeDimensionScores } from "@/domain/quiz/dimensions";
 import type { LevelKey } from "@/features/quiz/types";
 import type { QuizIntake } from "@/features/quiz/types";
 import { getLatestCompletedAttempt } from "@/features/compare/getLatestCompletedAttempt";
+import { completeAttemptRpc, trackEvent, printDevProof } from "@/lib/behaviorTracking";
 
 interface QuizResult {
   total: number;
@@ -173,6 +174,9 @@ export default function ResultPage() {
         // Store completed data for DevPanel
         setCompletedAttemptData(completedData);
 
+        // Call RPC to complete attempt (non-blocking)
+        completeAttemptRpc(attemptId);
+
         // Fetch full attempt to get quiz_id
         const { data: fullAttempt } = await supabase
           .from("attempts")
@@ -238,6 +242,27 @@ export default function ResultPage() {
 
     fetchAttemptData();
   }, [attemptId, isPreviewMode, attemptData]);
+
+  // Track page open event
+  useEffect(() => {
+    if (!isPreviewMode && attemptId) {
+      trackEvent({
+        attempt_id: attemptId,
+        event_type: "open",
+        source_page: "result",
+      });
+    }
+  }, [attemptId, isPreviewMode]);
+
+  // DEV-ONLY: Print proof report after completion
+  useEffect(() => {
+    if (import.meta.env.DEV && attemptId && completedAttemptData) {
+      // Wait a bit for all writes to complete
+      setTimeout(() => {
+        printDevProof(attemptId);
+      }, 2000);
+    }
+  }, [attemptId, completedAttemptData]);
 
   useEffect(() => {
     // DEV-ONLY: Check for score query parameter (e.g., /result?score=28)

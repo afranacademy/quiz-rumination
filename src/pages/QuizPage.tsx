@@ -17,6 +17,7 @@ import { getCompareSession } from "@/features/compare/getCompareSession";
 // import { InviteIdentityGate } from "@/features/compare/InviteIdentityGate"; // Unused
 import { getInviteTokenSafe } from "@/features/compare/getInviteToken";
 import type { LikertValue, LevelKey } from "@/features/quiz/types";
+import { submitAnswer } from "@/lib/behaviorTracking";
 
 export default function QuizPage() {
   const navigate = useNavigate();
@@ -969,8 +970,23 @@ export default function QuizPage() {
       <QuizPageComponent
         onComplete={handleComplete}
         onAnswerChange={(answers) => {
+          const prevAnswers = answersRef.current;
           answersRef.current = answers;
           debouncedUpdate(answers);
+          
+          // Persist newly selected answer to attempt_answers (non-blocking)
+          // Find the answer that changed
+          for (const questionIdStr of Object.keys(answers)) {
+            const questionId = parseInt(questionIdStr, 10);
+            const newValue = answers[questionId];
+            const prevValue = prevAnswers[questionId];
+            
+            // If this answer changed and has a value, persist it
+            if (newValue !== undefined && newValue !== null && newValue !== prevValue && attemptId) {
+              const questionIndex = questionId - 1; // Convert to 0-indexed (question IDs are 1-12)
+              submitAnswer(attemptId, questionIndex, newValue);
+            }
+          }
         }}
         onExit={handleExit}
         isSubmitting={isSubmitting}

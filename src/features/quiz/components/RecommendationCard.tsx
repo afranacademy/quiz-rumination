@@ -4,6 +4,7 @@ import { Icon } from "./Icon";
 import type { LevelKey } from "../types";
 import { LINKS } from "@/config/links";
 import { trackCardEvent, CARD_TYPES, EVENT_TYPES } from "@/lib/trackCardEvent";
+import { trackEvent } from "@/lib/behaviorTracking";
 
 interface RecommendationSectionProps {
   title: string;
@@ -98,6 +99,16 @@ export function RecommendationSection({ title: _title, paragraphs, ctas, level, 
                         eventType: EVENT_TYPES.CLICK,
                         attemptId: attemptId || null,
                       });
+                      // Also track with new system
+                      if (attemptId) {
+                        trackEvent({
+                          attempt_id: attemptId,
+                          event_type: "click_cta",
+                          card_type: "cta_mind_varaj_course",
+                          source_page: "result",
+                          source_card: "recommendation_card",
+                        });
+                      }
                       window.open(link, "_blank");
                     }}
                   >
